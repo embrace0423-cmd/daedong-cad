@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>대동 CAD</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">대동 CAD<small>2D 도면 · DXF</small></div>
+  <div class="menu">
+    <button data-act="new" title="새 도면 (양식 고르기)">새 도면</button>
+    <button data-act="open" title="DXF·작업 파일 열기 (Ctrl+O)">열기</button>
+    <button data-act="save" title="DXF로 저장 (Ctrl+S)">DXF 저장</button>
+    <button data-act="savework" title="모든 정보를 담은 작업 파일(.dcad.json)">작업 파일 저장</button>
+    <span class="sep"></span>
+    <button data-act="png" title="그림 파일(PNG)로 내보내기">PNG</button>
+    <button data-act="svg" title="벡터 그림(SVG), 종이 크기는 축척대로">SVG</button>
+    <button data-act="print" title="인쇄 (도곽 범위를 축척대로)">인쇄</button>
+    <span class="sep"></span>
+    <button data-act="undo" title="되돌리기 (Ctrl+Z)">되돌리기</button>
+    <button data-act="redo" title="다시 하기 (Ctrl+Y)">다시</button>
+    <button data-act="zoomext" title="전체 보기 (Z, 휠 두 번 클릭)">전체 보기</button>
+    <span class="sep"></span>
+    <button data-act="theme" title="밝은 화면 / 어두운 화면">밝게</button>
+    <button data-act="help" title="명령과 입력 방법 (F1)">도움말</button>
+  </div>
+  <div id="docname"></div>
+</header>
+
+<div id="main">
+  <nav id="tools" aria-label="도구">
+    <h3>그리기</h3>
+    <div class="grid">
+      <button data-cmd="LINE">선<kbd>L</kbd></button>
+      <button data-cmd="PLINE">폴리선<kbd>PL</kbd></button>
+      <button data-cmd="RECT">사각형<kbd>REC</kbd></button>
+      <button data-cmd="CIRCLE">원<kbd>C</kbd></button>
+      <button data-cmd="ARC">호<kbd>A</kbd></button>
+      <button data-cmd="ELLIPSE">타원<kbd>EL</kbd></button>
+      <button data-cmd="WALL">벽<kbd>W</kbd></button>
+      <button data-cmd="TEXT">문자<kbd>T</kbd></button>
+    </div>
+    <h3>치수</h3>
+    <div class="grid">
+      <button data-cmd="DIMLIN">선형<kbd>DLI</kbd></button>
+      <button data-cmd="DIMALI">평행<kbd>DAL</kbd></button>
+      <button data-cmd="DIMRAD">반지름<kbd>DRA</kbd></button>
+      <button data-cmd="DIMDIA">지름<kbd>DDI</kbd></button>
+      <button data-cmd="DIMANG">각도<kbd>DAN</kbd></button>
+      <button data-cmd="EDITTEXT">문자수정<kbd>ED</kbd></button>
+    </div>
+    <h3>수정</h3>
+    <div class="grid">
+      <button data-cmd="MOVE">이동<kbd>M</kbd></button>
+      <button data-cmd="COPY">복사<kbd>CO</kbd></button>
+      <button data-cmd="ROTATE">회전<kbd>RO</kbd></button>
+      <button data-cmd="MIRROR">대칭<kbd>MI</kbd></button>
+      <button data-cmd="SCALE">크기<kbd>SC</kbd></button>
+      <button data-cmd="OFFSET">간격<kbd>O</kbd></button>
+      <button data-cmd="TRIM">자르기<kbd>TR</kbd></button>
+      <button data-cmd="EXTEND">연장<kbd>EX</kbd></button>
+      <button data-cmd="FILLET">모깎기<kbd>F</kbd></button>
+      <button data-cmd="CHAMFER">모따기<kbd>CHA</kbd></button>
+      <button data-cmd="ARRAY">배열<kbd>AR</kbd></button>
+      <button data-cmd="ARRAYPOLAR">원형배열<kbd>ARP</kbd></button>
+      <button data-cmd="JOIN">결합<kbd>J</kbd></button>
+      <button data-cmd="EXPLODE">분해<kbd>X</kbd></button>
+      <button data-cmd="ERASE">지우기<kbd>E</kbd></button>
+    </div>
+    <h3>재기 · 도면</h3>
+    <div class="grid">
+      <button data-cmd="DIST">거리<kbd>DI</kbd></button>
+      <button data-cmd="AREA">넓이<kbd>AA</kbd></button>
+      <button data-cmd="SHEET">도곽<kbd></kbd></button>
+      <button data-act="symbols">기호<kbd>I</kbd></button>
+    </div>
+  </nav>
+
+  <div id="stage">
+    <canvas id="cv" tabindex="0" aria-label="도면 화면"></canvas>
+    <div id="drop">DXF 파일을 여기에 놓으세요</div>
+  </div>
+
+  <aside id="side">
+    <div class="tabs">
+      <button data-tab="layers" class="on">도면층</button>
+      <button data-tab="props">속성</button>
+      <button data-tab="lib">기호</button>
+    </div>
+    <div class="pane on" id="pane-layers"></div>
+    <div class="pane" id="pane-props"></div>
+    <div class="pane" id="pane-lib"></div>
+  </aside>
+</div>
+
+<footer>
+  <div id="history" aria-live="polite"></div>
+  <div id="cmdrow">
+    <span id="prompt">명령:</span>
+    <input id="cmd" type="text" autocomplete="off" spellcheck="false" aria-label="명령 입력">
+  </div>
+  <div id="status">
+    <span id="coords">0, 0</span>
+    <button data-tog="grid" title="격자 보이기 (F7)">격자</button>
+    <button data-tog="snap" title="격자에 붙이기 (F9)">격자스냅</button>
+    <button data-tog="ortho" title="가로·세로로만 (F8)">직교</button>
+    <button data-tog="osnap" title="끝점·중심 등에 붙이기 (F3), 오른쪽 클릭으로 종류 고르기">객체스냅</button>
+    <span class="grow"></span>
+    <span class="info" id="info"></span>
+  </div>
+</footer>
+
+<dialog id="dlg-new">
+  <h2>새 도면</h2>
+  <div class="tpl-grid" id="tpl-grid"></div>
+  <div class="form-row">
+    <label>도면 이름 <input type="text" id="new-title" size="22"></label>
+    <label>종이 <select id="new-sheet"><option value="">도곽 없음</option><option>A4</option><option>A3</option><option>A2</option><option>A1</option><option>A0</option></select></label>
+    <label>축척 1: <input type="number" id="new-scale" min="0.01" step="any" style="width:80px"></label>
+    <label>회사명 <input type="text" id="new-company" size="12"></label>
+  </div>
+  <p class="hint" id="tpl-note"></p>
+  <div class="dlg-actions">
+    <button data-close>취소</button>
+    <button class="primary" id="new-ok">만들기</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-help">
+  <h2>도움말</h2>
+  <div class="help" id="help-body"></div>
+  <div class="dlg-actions"><button data-close class="primary">닫기</button></div>
+</dialog>
+
+<input type="file" id="file" accept=".dxf,.json,.dcad" hidden>
+<div id="printarea"></div>
+
+<script src="js/aci.js"></script>
+<script src="js/geom.js"></script>
+<script src="js/model.js"></script>
+<script src="js/dxf-write.js"></script>
+<script src="js/dxf-read.js"></script>
+<script src="js/svg.js"></script>
+<script src="js/library.js"></script>
+<script src="js/render.js"></script>
+<script src="js/commands.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
