@@ -11,7 +11,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
 
 (async () => {
-  const browser = await playwright.chromium.launch();
+  const browser = await playwright.chromium.launch({ env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } }); // 한글 파일 이름
   const page = await browser.newPage({ viewport: { width: 1500, height: 920 }, acceptDownloads: true });
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -128,9 +128,62 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   await page.keyboard.press('Control+y');
   check((await count()) === nb, '다시 하기');
 
-  // 12) 창 선택(드래그) → 지우기
-  await page.evaluate(() => DCAD.App.zoomExtents());
-  await page.waitForTimeout(50);
+  // 12) 마우스로: 끝점 스냅, 창 선택, 그립, 호 폴리선, 바로 타이핑, 문자 두 번 클릭
+  await page.evaluate(() => { DCAD.App.R.fit({ x0: 19000, y0: 4000, x1: 23000, y1: 7000 }); });
+  await runAll(['L', '20000,5000', '@1000,0', '']);
+  await run('L');
+  await clickWorld(21004, 5003); // 끝점 근처를 클릭 → 정확히 (21000,5000)
+  await clickWorld(21000, 6000);
+  await run('');
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0]);
+  check(ents.a.x === 21000 && ents.a.y === 5000, '끝점 스냅으로 정확한 점 (' + ents.a.x + ',' + ents.a.y + ')');
+  // 창 선택: 왼쪽 위 → 오른쪽 아래로 끌어 두 선을 고른다
+  const sA = await page.evaluate(() => { const r = DCAD.App.R.toScreen({ x: 19800, y: 6300 }); const b = document.getElementById('cv').getBoundingClientRect(); return { x: r.x + b.left, y: r.y + b.top }; });
+  const sB = await page.evaluate(() => { const r = DCAD.App.R.toScreen({ x: 21300, y: 4800 }); const b = document.getElementById('cv').getBoundingClientRect(); return { x: r.x + b.left, y: r.y + b.top }; });
+  await page.mouse.move(sA.x, sA.y); await page.mouse.down(); await page.mouse.move(sB.x, sB.y, { steps: 5 }); await page.mouse.up();
+  check((await page.evaluate(() => DCAD.App.sel.size)) === 2, '창 선택으로 2개');
+  await runAll(['M', '20000,5000', '@0,-500']);
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-2).map((e) => e.a.y));
+  check(ents[0] === 4500 && ents[1] === 4500, '선택한 채로 이동 → 2개 모두 이동');
+  // 그립: 선 하나를 고르고 끝점을 끌어 옮김
+  const lid = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0].id);
+  await page.evaluate((id) => { DCAD.App.sel.clear(); DCAD.App.sel.add(id); }, lid);
+  await page.evaluate(() => DCAD.App.zoomExtents && 0);
+  await clickWorld(21000, 5500); // 위쪽 끝 그립
+  await run('22000,5500'); // 새 위치는 좌표로
+  ents = await page.evaluate((id) => DCAD.App.doc.ents.find((e) => e.id === id), lid);
+  check(ents.b.x === 22000 && ents.b.y === 5500, '그립으로 끝점 옮기기 → (' + ents.b.x + ',' + ents.b.y + ')');
+  await page.keyboard.press('Escape');
+  // 호가 섞인 폴리선 (A 모드)
+  await runAll(['PL', '19000,6000', '@500,0', 'A', '@0,500', 'L', '@-500,0', 'C']);
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0]);
+  check(ents.type === 'poly' && ents.closed && ents.pts.length === 4 && Math.abs(ents.pts[1].bulge - 1) < 1e-9, '폴리선 호 모드: 반원 볼록값 1');
+  // 화면에서 바로 타이핑하면 명령줄로 들어감
+  await page.focus('#cv');
+  await page.keyboard.type('c');
+  check((await page.inputValue('#cmd')) === 'c', '화면에서 타이핑 → 명령줄');
+  await page.fill('#cmd', '');
+  // 문자 두 번 클릭 → 고치기
+  await runAll(['T', '19200,6800', '150', '0', '수정 전', '']);
+  const s3 = await page.evaluate(() => { const r = DCAD.App.R.toScreen({ x: 19260, y: 6850 }); const b = document.getElementById('cv').getBoundingClientRect(); return { x: r.x + b.left, y: r.y + b.top }; });
+  await page.mouse.dblclick(s3.x, s3.y);
+  await run('수정 후');
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0].s);
+  check(ents === '수정 후', '문자 두 번 클릭해서 고치기');
+  // 분해 → 결합
+  const maxId = await page.evaluate(() => { const e = DCAD.App.doc.ents.filter((x) => x.type === 'poly' && x.closed && x.pts.length === 4 && x.pts[1].bulge).slice(-1)[0]; DCAD.App.sel.clear(); DCAD.App.sel.add(e.id); return DCAD.App.doc.nextId - 1; });
+  await run('X');
+  const parts = await page.evaluate((m) => DCAD.App.doc.ents.filter((e) => e.id > m).map((e) => e.type).join(','), maxId);
+  check(parts === 'line,arc,line,line', '분해: 선·호·선·선 (' + parts + ')');
+  await page.evaluate((m) => { DCAD.App.sel.clear(); DCAD.App.doc.ents.filter((e) => e.id > m).forEach((e) => DCAD.App.sel.add(e.id)); }, maxId);
+  await run('J');
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0]);
+  check(ents.type === 'poly' && ents.closed && ents.pts.length === 4 && ents.pts.some((p) => Math.abs(Math.abs(p.bulge || 0) - 1) < 1e-9), '결합: 다시 닫힌 폴리선 하나');
+  // 인쇄 준비 (실제 인쇄창은 막음)
+  await page.evaluate(() => { window.print = () => { window.__printed = true; }; });
+  await page.click('[data-act=print]');
+  await page.waitForTimeout(150);
+  check(await page.evaluate(() => window.__printed === true && !!document.querySelector('#printarea svg')), '인쇄: 흑백 SVG 준비 후 인쇄 호출');
 
   // 화면 캡처
   await page.evaluate(() => DCAD.App.zoomExtents());
@@ -142,6 +195,7 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   const dxfPath = path.join(OUT, 'e2e-remodel.dxf');
   await dl.saveAs(dxfPath);
   check(fs.statSync(dxfPath).size > 1000, 'DXF 저장 (' + fs.statSync(dxfPath).size + ' bytes)');
+  check(dl.suggestedFilename() === '리모델링 평면도.dxf', '저장 파일 이름 = 도면 이름 (' + dl.suggestedFilename() + ')');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=svg]')]);
   await dl2.saveAs(path.join(OUT, 'e2e-remodel.svg'));
   const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=png]')]);
