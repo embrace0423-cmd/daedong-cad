@@ -269,6 +269,11 @@
     return pr;
   }
 
+  // 밑그림 이미지의 네 구석 (왼쪽 아래부터 반시계). u = 폭 방향, v = 높이 방향 벡터
+  function imageCorners(e) {
+    return [e.p, G.add(e.p, e.u), G.add(G.add(e.p, e.u), e.v), G.add(e.p, e.v)];
+  }
+
   function primsOf(e, doc, depth) {
     depth = depth || 0;
     switch (e.type) {
@@ -279,6 +284,7 @@
       case 'ellipse': { var ep = ellipsePoints(e); return [{ k: 'P', pts: ep.pts, closed: ep.full }]; }
       case 'point': return [{ k: 'P', pts: [e.p, e.p] }];
       case 'text': case 'mtext': return [{ k: 'T', poly: textBox(e), ins: e.p }];
+      case 'image': return [{ k: 'P', pts: imageCorners(e), closed: true, img: true }];
       case 'hatch': {
         var hpolys = NS.Hatch.polysOf(e), hp = [];
         hpolys.forEach(function (pl) { hp.push({ k: 'P', pts: pl, closed: true, hb: true, fill: !!e.solid }); });
@@ -488,6 +494,7 @@
         break;
       }
       case 'text': case 'mtext': case 'point': put(e.p, 'ins'); break;
+      case 'image': imageCorners(e).forEach(function (p) { put(p, 'end'); }); break;
       case 'dim':
         if (e.kind === 'lin') { put(e.p1, 'end'); put(e.p2, 'end'); }
         else { put(e.c, 'cen'); put(e.p, 'end'); }
@@ -556,6 +563,7 @@
         if (e.kind === 'ang' && flip) { var t = e.p1; e.p1 = e.p2; e.p2 = t; }
         if (e.st) { e.st = clone(e.st); e.st.textH *= s; e.st.arrow *= s; e.st.exo *= s; e.st.exe *= s; e.st.gap *= s; }
         break;
+      case 'image': ap(e.p); e.u = M.vec(m, e.u); e.v = M.vec(m, e.v); break;
       case 'insert': {
         ap(e.p);
         var th = Math.atan2(m.b, m.a), sx = e.sx === undefined ? 1 : e.sx, sy = e.sy === undefined ? 1 : e.sy;
@@ -677,7 +685,7 @@
   NS.Model = {
     LTYPES: LTYPES, newDoc: newDoc, layerOf: layerOf, ensureLayer: ensureLayer, ensureLtype: ensureLtype,
     mk: mk, clone: clone, textWidth: textWidth, textBox: textBox, dimGeom: dimGeom, polySegs: polySegs,
-    ellipsePoints: ellipsePoints, insertMatrix: insertMatrix, mapPrim: mapPrim, primsOf: primsOf, prims: prims,
+    ellipsePoints: ellipsePoints, imageCorners: imageCorners, insertMatrix: insertMatrix, mapPrim: mapPrim, primsOf: primsOf, prims: prims,
     bounds: bounds, touch: touch, primDist: primDist, primNearest: primNearest, primInter: primInter,
     hitDist: hitDist, hitsBox: hitsBox, snapsOf: snapsOf, transform: transform, explode: explode,
     aciRgb: aciRgb, entAci: entAci, entLtype: entLtype, entLw: entLw, LWEIGHTS: LWEIGHTS, LW_DEFAULT: LW_DEFAULT, extents: extents, readableRot: readableRot

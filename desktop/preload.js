@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('dcadDesktop', {
   info: () => ipcRenderer.invoke('dcad:info'),
   initialFile: () => ipcRenderer.invoke('dcad:initial'),
   open: () => ipcRenderer.invoke('dcad:open-dialog'),
+  recent: () => ipcRenderer.invoke('dcad:recent'),
   read: (p) => ipcRenderer.invoke('dcad:read', p),
   save: (req) => ipcRenderer.invoke('dcad:save', req),
   pdf: (req) => ipcRenderer.invoke('dcad:pdf', req),

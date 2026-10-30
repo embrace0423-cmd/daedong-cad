@@ -12,6 +12,7 @@
   <div class="menu">
     <button data-act="new" title="새 도면 (양식 고르기)">새 도면</button>
     <button data-act="open" title="DXF·작업 파일 열기 (Ctrl+O)">열기</button>
+    <button data-act="recent" data-desktop hidden title="최근에 열거나 저장한 도면">최근 ▾</button>
     <button data-act="save" title="DXF로 저장 (Ctrl+S)">DXF 저장</button>
     <button data-act="savework" title="모든 정보를 담은 작업 파일(.dcad.json)">작업 파일 저장</button>
     <span class="sep"></span>
@@ -81,6 +82,7 @@
       <button data-cmd="QTO">물량<kbd>QTO</kbd></button>
       <button data-cmd="SHEET">도곽<kbd></kbd></button>
       <button data-act="symbols">기호<kbd>I</kbd></button>
+      <button data-cmd="IMAGE" title="평면도 사진·스캔을 깔고 따라 그리기">밑그림<kbd>IM</kbd></button>
     </div>
   </nav>
 
@@ -151,10 +153,12 @@
 </dialog>
 
 <input type="file" id="file" accept=".dxf,.json,.dcad" hidden>
+<input type="file" id="imgfile" accept="image/*" hidden>
 <div id="printarea"></div>
 
 <script src="js/aci.js"></script>
 <script src="js/geom.js"></script>
+<script src="js/images.js"></script>
 <script src="js/model.js"></script>
 <script src="js/hatch.js"></script>
 <script src="js/region.js"></script>

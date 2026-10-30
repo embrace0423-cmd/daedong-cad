@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-['aci', 'geom', 'model', 'hatch', 'region', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
+['aci', 'geom', 'images', 'model', 'hatch', 'region', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
 const D = globalThis.DCAD;
 const { G, Model, Commands: Cmd, Library: Lib, DXF } = D;
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≉ ${b}`);
@@ -324,4 +324,36 @@ test('물량 산출: 기호 개수, 도면층별 길이, 넓이(평)', () => {
   near(a.m2, 3.305785); near(a.m2 / 3.305785, 1);
   const csv = Cmd.quantitiesCSV(q, '시험');
   assert.ok(csv.charCodeAt(0) === 0xfeff && /침대 퀸,BED_QUEEN,2,개/.test(csv));
+});
+
+test('밑그림: 변환·저장(쓰인 그림만)·SVG(인쇄에 넣기만)·DXF 제외·교점과 해치 경계에서 빠짐', () => {
+  const doc = Lib.newFromTemplate('remodel', { frame: false });
+  const I = D.Images;
+  const ref = I.put('data:image/png;base64,iVBORw0KGgo='), unused = I.put('data:image/png;base64,AAAA');
+  assert.equal(I.put('data:image/png;base64,iVBORw0KGgo='), ref);
+  const img = Model.mk(doc, 'image', { p: { x: 0, y: 0 }, u: { x: 4000, y: 0 }, v: { x: 0, y: 3000 }, ref, iw: 400, ih: 300, alpha: 0.5, plot: false });
+  img.layer = '밑그림'; doc.ents.push(img);
+  // 두 점 축척 맞추기와 같은 변환: 기준점 (0,0)에서 ×1.5, 90° 회전
+  Model.transform(img, G.M.scale(1.5, 1.5, { x: 0, y: 0 })); Model.touch();
+  near(G.len(img.u), 6000); near(G.len(img.v), 4500);
+  Model.transform(img, G.M.rot(Math.PI / 2, { x: 0, y: 0 })); Model.touch();
+  nearPt(Model.imageCorners(img)[1], { x: 0, y: 6000 }); nearPt(Model.imageCorners(img)[3], { x: -4500, y: 0 });
+  assert.equal(Model.snapsOf(img, doc).length, 4);
+  // 작업 파일에는 쓰인 그림만, 되돌리기 기록(JSON)에는 그림이 없음
+  const saved = JSON.parse(I.serialize(doc));
+  assert.deepEqual(Object.keys(saved.images), [ref]);
+  assert.ok(!JSON.stringify(doc).includes('base64'));
+  assert.ok(!Object.keys(saved.images).includes(unused));
+  I.unpack(saved); assert.equal(saved.images, undefined);
+  // SVG는 '인쇄에 넣기'한 것만, DXF에는 넣지 않음
+  assert.ok(!/<image /.test(D.SVG.toSVG(doc, {})));
+  img.plot = true;
+  assert.ok(/<image href="data:image\/png/.test(D.SVG.toSVG(doc, {})));
+  const back = DXF.read(new TextEncoder().encode(DXF.write(doc)));
+  assert.equal(back.doc.ents.length, 0);
+  // 밑그림 테두리는 자르기·연장의 기준이나 해치 경계가 되지 않음
+  const ln = Model.mk(doc, 'line', { a: { x: -9000, y: 3000 }, b: { x: 9000, y: 3000 } }); ln.layer = '0'; doc.ents.push(ln);
+  assert.equal(Cmd.interPts(ln, doc.ents, doc).length, 0);
+  assert.equal(D.Region.find(doc.ents, doc, { x: -1000, y: 1000 }), null);
+  assert.deepEqual(Cmd.quantities([img], doc), { blocks: [], lengths: [], areas: [] });
 });

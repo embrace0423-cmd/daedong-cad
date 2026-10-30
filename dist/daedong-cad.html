@@ -18,8 +18,10 @@
   --ok: #57c87a;
   --font: "Malgun Gothic", "맑은 고딕", "Noto Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: "D2Coding", "Consolas", "Menlo", monospace;
+  color-scheme: dark;
 }
 body.light {
+  color-scheme: light;
   --bg: #eef0f4;
   --panel: #ffffff;
   --panel2: #f3f5f9;
@@ -29,7 +31,7 @@ body.light {
   --accent: #0a64d8;
   --accent2: #0a64d8;
 }
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--text); font: 13px/1.4 var(--font);
@@ -62,7 +64,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 
 /* 왼쪽 도구 */
 #tools {
-  width: 168px; flex: none; overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); padding: 8px;
+  width: 168px; flex: none; overflow-y: auto; overflow-x: hidden; background: var(--panel); border-right: 1px solid var(--line); padding: 8px;
 }
 #tools h3 { margin: 10px 0 5px; font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 1px; }
 #tools h3:first-child { margin-top: 0; }
@@ -168,6 +170,10 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
 .aci-base { display: flex; gap: 2px; }
 .aci-base span { width: 16px; height: 16px; }
 .osnap-list label { display: block; padding: 2px 0; }
+.recent-list { width: min(380px, 92vw); max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.recent-list button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 6px 8px; border-color: transparent; background: transparent; }
+.recent-list button:hover { background: var(--panel2); border-color: var(--line); }
+.recent-list small { color: var(--muted); font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 #printarea { display: none; }
 @media print {
@@ -196,6 +202,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   <div class="menu">
     <button data-act="new" title="새 도면 (양식 고르기)">새 도면</button>
     <button data-act="open" title="DXF·작업 파일 열기 (Ctrl+O)">열기</button>
+    <button data-act="recent" data-desktop hidden title="최근에 열거나 저장한 도면">최근 ▾</button>
     <button data-act="save" title="DXF로 저장 (Ctrl+S)">DXF 저장</button>
     <button data-act="savework" title="모든 정보를 담은 작업 파일(.dcad.json)">작업 파일 저장</button>
     <span class="sep"></span>
@@ -265,6 +272,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       <button data-cmd="QTO">물량<kbd>QTO</kbd></button>
       <button data-cmd="SHEET">도곽<kbd></kbd></button>
       <button data-act="symbols">기호<kbd>I</kbd></button>
+      <button data-cmd="IMAGE" title="평면도 사진·스캔을 깔고 따라 그리기">밑그림<kbd>IM</kbd></button>
     </div>
   </nav>
 
@@ -335,6 +343,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
 </dialog>
 
 <input type="file" id="file" accept=".dxf,.json,.dcad" hidden>
+<input type="file" id="imgfile" accept="image/*" hidden>
 <div id="printarea"></div>
 
 <script>
@@ -620,6 +629,82 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 </script>
 <script>
+// ---- js/images.js ----
+// 밑그림 이미지 보관소. 도면의 image 개체에는 이름표(ref)만 두고 그림 데이터는 여기 한 벌만 둔다
+// (되돌리기 기록이 그림 크기만큼 불어나지 않도록). 작업 파일·자동 저장·복사할 때만 쓰인 그림을 images로 함께 담는다.
+(function (g) {
+  'use strict';
+  var NS = g.DCAD = g.DCAD || {};
+  var map = new Map(); // ref → { src: dataURL, el: 불러온 Image 또는 null }
+  var onload = null;
+
+  function hash(s, seed) {
+    var h = seed >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  function add(ref, src) {
+    var o = { src: src, el: null };
+    map.set(ref, o);
+    if (typeof g.Image === 'function') {
+      var im = new g.Image();
+      im.onload = function () { o.el = im; if (onload) onload(ref); };
+      im.src = src;
+    }
+    return ref;
+  }
+  // 그림 데이터를 넣고 이름표를 받는다. 같은 그림은 한 번만 들어간다.
+  function put(src) {
+    var ref = 'img_' + hash(src, 2166136261) + hash(src, 374761393) + '_' + src.length.toString(36);
+    return map.has(ref) ? ref : add(ref, src);
+  }
+  function el(ref) { var o = map.get(ref); return o ? o.el : null; }
+  function src(ref) { var o = map.get(ref); return o ? o.src : null; }
+
+  function eachRef(doc, ents, fn) {
+    var seenBlk = new Set();
+    function walk(list) {
+      list.forEach(function (e) {
+        if (e.type === 'image' && e.ref) fn(e.ref);
+        else if (e.type === 'insert' && doc && doc.blocks && doc.blocks[e.name] && !seenBlk.has(e.name)) {
+          seenBlk.add(e.name);
+          walk(doc.blocks[e.name].ents);
+        }
+      });
+    }
+    walk(ents || (doc ? doc.ents : []));
+  }
+  // 개체들이 쓰는 그림만 { ref: dataURL }로 (없으면 null)
+  function pack(doc, ents) {
+    var out = {}, n = 0;
+    eachRef(doc, ents, function (r) { var s = src(r); if (s && !out[r]) { out[r] = s; n++; } });
+    return n ? out : null;
+  }
+  // 저장본·복사본에 담긴 그림을 보관소에 넣고 그 칸은 지운다
+  function unpack(obj) {
+    if (obj && obj.images) {
+      Object.keys(obj.images).forEach(function (r) { if (!map.has(r)) add(r, obj.images[r]); });
+      delete obj.images;
+    }
+    return obj;
+  }
+  // 작업 파일·자동 저장용 JSON (쓰인 그림을 함께 담음)
+  function serialize(doc) {
+    var imgs = pack(doc);
+    if (!imgs) return JSON.stringify(doc);
+    var o = Object.assign({}, doc);
+    o.images = imgs;
+    return JSON.stringify(o);
+  }
+
+  NS.Images = {
+    put: put, el: el, src: src, has: function (r) { return map.has(r); },
+    pack: pack, unpack: unpack, serialize: serialize,
+    onLoad: function (fn) { onload = fn; }
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+<script>
 // ---- js/model.js ----
 // 도면 모델: 문서, 도면층, 선 종류, 개체별 기본 도형(prim)·경계·스냅·변환·분해.
 // 개체는 JSON으로 그대로 저장할 수 있는 평범한 객체다.
@@ -892,6 +977,11 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     return pr;
   }
 
+  // 밑그림 이미지의 네 구석 (왼쪽 아래부터 반시계). u = 폭 방향, v = 높이 방향 벡터
+  function imageCorners(e) {
+    return [e.p, G.add(e.p, e.u), G.add(G.add(e.p, e.u), e.v), G.add(e.p, e.v)];
+  }
+
   function primsOf(e, doc, depth) {
     depth = depth || 0;
     switch (e.type) {
@@ -902,6 +992,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       case 'ellipse': { var ep = ellipsePoints(e); return [{ k: 'P', pts: ep.pts, closed: ep.full }]; }
       case 'point': return [{ k: 'P', pts: [e.p, e.p] }];
       case 'text': case 'mtext': return [{ k: 'T', poly: textBox(e), ins: e.p }];
+      case 'image': return [{ k: 'P', pts: imageCorners(e), closed: true, img: true }];
       case 'hatch': {
         var hpolys = NS.Hatch.polysOf(e), hp = [];
         hpolys.forEach(function (pl) { hp.push({ k: 'P', pts: pl, closed: true, hb: true, fill: !!e.solid }); });
@@ -1111,6 +1202,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
         break;
       }
       case 'text': case 'mtext': case 'point': put(e.p, 'ins'); break;
+      case 'image': imageCorners(e).forEach(function (p) { put(p, 'end'); }); break;
       case 'dim':
         if (e.kind === 'lin') { put(e.p1, 'end'); put(e.p2, 'end'); }
         else { put(e.c, 'cen'); put(e.p, 'end'); }
@@ -1179,6 +1271,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
         if (e.kind === 'ang' && flip) { var t = e.p1; e.p1 = e.p2; e.p2 = t; }
         if (e.st) { e.st = clone(e.st); e.st.textH *= s; e.st.arrow *= s; e.st.exo *= s; e.st.exe *= s; e.st.gap *= s; }
         break;
+      case 'image': ap(e.p); e.u = M.vec(m, e.u); e.v = M.vec(m, e.v); break;
       case 'insert': {
         ap(e.p);
         var th = Math.atan2(m.b, m.a), sx = e.sx === undefined ? 1 : e.sx, sy = e.sy === undefined ? 1 : e.sy;
@@ -1300,7 +1393,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   NS.Model = {
     LTYPES: LTYPES, newDoc: newDoc, layerOf: layerOf, ensureLayer: ensureLayer, ensureLtype: ensureLtype,
     mk: mk, clone: clone, textWidth: textWidth, textBox: textBox, dimGeom: dimGeom, polySegs: polySegs,
-    ellipsePoints: ellipsePoints, insertMatrix: insertMatrix, mapPrim: mapPrim, primsOf: primsOf, prims: prims,
+    ellipsePoints: ellipsePoints, imageCorners: imageCorners, insertMatrix: insertMatrix, mapPrim: mapPrim, primsOf: primsOf, prims: prims,
     bounds: bounds, touch: touch, primDist: primDist, primNearest: primNearest, primInter: primInter,
     hitDist: hitDist, hitsBox: hitsBox, snapsOf: snapsOf, transform: transform, explode: explode,
     aciRgb: aciRgb, entAci: entAci, entLtype: entLtype, entLw: entLw, LWEIGHTS: LWEIGHTS, LW_DEFAULT: LW_DEFAULT, extents: extents, readableRot: readableRot
@@ -1487,7 +1580,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       if (closed && pts.length > 2) segs.push([pts[pts.length - 1], pts[0]]);
     }
     ents.forEach(function (e) {
-      if (e.type === 'hatch' || e.type === 'text' || e.type === 'mtext' || e.type === 'dim' || e.type === 'point') return;
+      if (e.type === 'hatch' || e.type === 'image' || e.type === 'text' || e.type === 'mtext' || e.type === 'dim' || e.type === 'point') return;
       Model.prims(e, doc).forEach(function (pr) {
         if (pr.hp || pr.hb) return;
         if (pr.k === 'L') segs.push([pr.a, pr.b]);
@@ -2483,6 +2576,12 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
           if (!segs.length) return '';
           return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '" stroke-width="' + n(lwk) + '"/>';
         }
+        case 'image': {
+          var isrc = e.plot && NS.Images && NS.Images.src(e.ref);
+          if (!isrc || !e.iw || !e.ih) return '';
+          var im = [e.u.x / e.iw, e.u.y / e.iw, -e.v.x / e.ih, -e.v.y / e.ih, e.p.x + e.v.x, e.p.y + e.v.y];
+          return '<image href="' + isrc + '" width="' + e.iw + '" height="' + e.ih + '" preserveAspectRatio="none" transform="matrix(' + im.map(function (x) { return String(Math.round(x * 1e6) / 1e6); }).join(' ') + ')" opacity="' + n(e.alpha === undefined ? 0.5 : e.alpha) + '"' + (mono ? ' style="filter:grayscale(1)"' : '') + '/>';
+        }
         case 'point': return '<circle cx="' + n(e.p.x) + '" cy="' + n(e.p.y) + '" r="' + n(sw) + '" fill="' + col + '" stroke="none"/>';
         case 'text': return text(e.p, e.h, e.rot, e.s, e.align, e.valign, col);
         case 'mtext': return (Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).map(function (t) { return text(t.p, t.h, t.rot, t.s, t.align, t.valign, col); }).join('');
@@ -2791,6 +2890,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     this.view = { cx: 0, cy: 0, scale: 1 };
     this.dark = true;
     this.showLw = false; this.lwPx = 4; // 선 굵기 보이기, 종이 1mm당 화면 픽셀
+    this.output = false; // PNG 내보내기: 밑그림은 '인쇄에 넣기'한 것만, 테두리 없이
     this.w = 0; this.h = 0; this.dpr = 1;
   }
   Renderer.prototype.resize = function () {
@@ -2928,6 +3028,19 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
           pr.forEach(function (q) { if (q.hb) { ctx.moveTo(q.pts[0].x, q.pts[0].y); for (var t = 1; t < q.pts.length; t++) ctx.lineTo(q.pts[t].x, q.pts[t].y); ctx.closePath(); } });
           ctx.stroke();
         }
+        break;
+      }
+      case 'image': {
+        if (this.output && !e.plot) break;
+        var im = NS.Images && NS.Images.el(e.ref);
+        if (im && e.iw && e.ih) {
+          ctx.save();
+          ctx.globalAlpha = e.alpha === undefined ? 0.5 : e.alpha;
+          ctx.transform(e.u.x / e.iw, e.u.y / e.iw, -e.v.x / e.ih, -e.v.y / e.ih, e.p.x + e.v.x, e.p.y + e.v.y);
+          ctx.drawImage(im, 0, 0);
+          ctx.restore();
+        }
+        if (!this.output) { this.pathPoly(ctx, Model.imageCorners(e), true); ctx.stroke(); }
         break;
       }
       case 'point': {
@@ -3108,6 +3221,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     canvas.width = w; canvas.height = h;
     r.w = w; r.h = h; r.dpr = 1; r.dark = false;
     r.showLw = true; r.lwPx = pxPerMm * (doc.settings.scale || 1); // 종이 mm 굵기 그대로
+    r.output = true;
     r.view = { cx: (box.x0 + box.x1) / 2, cy: (box.y0 + box.y1) / 2, scale: pxPerMm };
     var ctx = r.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
@@ -3281,7 +3395,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     var tp = Model.prims(target, doc), out = [];
     var tb = G.boxGrow(Model.bounds(target, doc), 1e-6);
     others.forEach(function (o) {
-      if (o === target || o.type === 'hatch') return;
+      if (o === target || o.type === 'hatch' || o.type === 'image') return;
       if (!G.boxHit(Model.bounds(o, doc), tb)) return;
       var op = Model.prims(o, doc);
       tp.forEach(function (a) { op.forEach(function (b) { Model.primInter(a, b).forEach(function (q) { out.push(q); }); }); });
@@ -3293,7 +3407,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     var seg = { k: 'L', a: a, b: b }, out = [];
     var sb = G.boxFrom(a, b);
     others.forEach(function (o) {
-      if (o === skip || o.type === 'hatch' || !G.boxHit(Model.bounds(o, doc), G.boxGrow(sb, 1e-6))) return;
+      if (o === skip || o.type === 'hatch' || o.type === 'image' || !G.boxHit(Model.bounds(o, doc), G.boxGrow(sb, 1e-6))) return;
       Model.prims(o, doc).forEach(function (pr) { Model.primInter(seg, pr).forEach(function (q) { out.push(q); }); });
     });
     return out;
@@ -3395,7 +3509,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       case 'arc': put(e.c, 'move'); put(G.polar(e.c, e.r, e.a0), 'a0'); put(G.polar(e.c, e.r, e.a1), 'a1'); put(G.polar(e.c, e.r, e.a0 + G.sweep(e.a0, e.a1) / 2), 'r'); break;
       case 'poly': e.pts.forEach(function (p, i) { put(p, 'v' + i); }); break;
       case 'ellipse': put(e.c, 'move'); break;
-      case 'text': case 'mtext': case 'insert': case 'point': put(e.p, 'move'); break;
+      case 'text': case 'mtext': case 'insert': case 'point': case 'image': put(e.p, 'move'); break;
       case 'dim':
         if (e.kind === 'lin') { put(e.p1, 'p1'); put(e.p2, 'p2'); put(e.loc, 'loc'); }
         else if (e.kind === 'ang') { put(e.c, 'move'); put(e.loc, 'loc'); }
@@ -3826,7 +3940,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
         var e0 = G.polar(e.c, e.r, e.a0), e1 = G.polar(e.c, e.r, e.a1), atEnd = G.dist(hit.p, e1) < G.dist(hit.p, e0);
         var circ = { k: 'C', c: e.c, r: e.r }, gap = G.normAng(e.a0 - e.a1), bestA = null, bestD = Infinity;
         others.forEach(function (o) {
-          if (o === e || o.type === 'hatch') return;
+          if (o === e || o.type === 'hatch' || o.type === 'image') return;
           Model.prims(o, ctx.doc).forEach(function (pr) {
             Model.primInter(circ, pr).forEach(function (q) {
               var ang = G.angle(e.c, q), dd = atEnd ? G.normAng(ang - e.a1) : G.normAng(e.a0 - ang);
@@ -4124,7 +4238,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
         break;
       }
       case 'circle': case 'ellipse': if (inb(e.c)) Model.transform(e, M.move(d.x, d.y)); break;
-      case 'text': case 'mtext': case 'insert': case 'point': if (inb(e.p)) Model.transform(e, M.move(d.x, d.y)); break;
+      case 'text': case 'mtext': case 'insert': case 'point': case 'image': if (inb(e.p)) Model.transform(e, M.move(d.x, d.y)); break;
       case 'dim': ['p1', 'p2', 'loc', 'c', 'p'].forEach(function (k) { if (e[k] && inb(e[k])) mv(e[k]); }); break;
     }
     return e;
@@ -4289,6 +4403,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   def('_PASTE', '붙여넣기', ['PASTE', '붙여넣기'], function* (ctx) {
     var clip = ctx.clipboard();
     if (!clip || !clip.ents || !clip.ents.length) { ctx.msg('복사한 것이 없습니다. 객체를 고르고 Ctrl+C 하세요.'); return; }
+    if (NS.Images) NS.Images.unpack(clip);
     Object.keys(clip.blocks || {}).forEach(function (n) { if (!ctx.doc.blocks[n]) ctx.doc.blocks[n] = Model.clone(clip.blocks[n]); });
     (clip.layers || []).forEach(function (l) { if (!Model.layerOf(ctx.doc, l.name)) ctx.doc.layers.push(Model.clone(l)); });
     Model.touch();
@@ -4296,6 +4411,38 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     var p = yield { type: 'point', prompt: '붙여 넣을 곳 (복사한 것의 왼쪽 아래가 여기에)', preview: function (q) { return previewOf(clip.ents, M.move(q.x - b.x, q.y - b.y)); } };
     cloneMove(clip.ents, M.move(p.x - b.x, p.y - b.y)).forEach(function (e) { e.id = 0; ctx.add(e); });
     ctx.msg(clip.ents.length + '개를 붙여 넣었습니다.');
+  });
+
+  // ---- 밑그림 이미지 ----
+  function niceLen(x) { var k = Math.pow(10, Math.floor(Math.log(x) / Math.LN10)); return Math.max(1, Math.round(x / k) * k); }
+  def('IMAGE', '밑그림 넣기', ['IM', '이미지', '밑그림'], function* (ctx) {
+    ctx.pickImage(); // 그림 파일을 고르면 _IMAGEPLACE가 이어서 시작된다
+  });
+  def('_IMAGEPLACE', '밑그림 넣기', [], function* (ctx) {
+    var im = ctx.takeImage();
+    if (!im) return;
+    var vb = ctx.viewBox(), w0 = niceLen((vb.x1 - vb.x0) * 0.6), ratio = im.ih / im.iw;
+    var make = function (p, w) {
+      return ctx.tmp('image', { p: G.v(p.x, p.y), u: G.v(w, 0), v: G.v(0, w * ratio), ref: im.ref, iw: im.iw, ih: im.ih, alpha: 0.5, plot: false, name: im.name });
+    };
+    var p = yield { type: 'point', prompt: '밑그림의 왼쪽 아래 구석', preview: function (q) { return [make(q, w0)]; } };
+    var w = yield { type: 'number', prompt: '밑그림 폭(mm) (모르면 Enter, 다음 단계에서 두 점으로 맞춥니다)', def: w0, base: p, preview: function (q) { var d = q.x - p.x; return d > 0 ? [make(p, d)] : []; } };
+    if (!(w > 0)) w = w0;
+    Model.ensureLayer(ctx.doc, '밑그림', 8, 'CONTINUOUS', 0.13);
+    var e = make(p, w);
+    e.layer = '밑그림';
+    ctx.addBehind(e);
+    ctx.msg('밑그림을 넣었습니다: ' + im.name + ' (' + im.iw + '×' + im.ih + ' 픽셀). 도면층 \'밑그림\'에 들어가고 DXF·인쇄에는 나오지 않습니다.');
+    var a = yield { type: 'point', prompt: '축척 맞추기: 밑그림에서 길이를 아는 곳의 첫 점 (건너뛰려면 Enter)', allowNone: true };
+    if (!a) return;
+    var b = yield { type: 'point', prompt: '둘째 점', base: a };
+    var L = yield { type: 'number', prompt: '두 점 사이의 실제 길이(mm)' };
+    var d = G.dist(a, b);
+    if (!(L > 0) || d < 1e-9) { ctx.msg('축척 맞추기를 건너뛰었습니다.'); return; }
+    ctx.change();
+    Model.transform(e, M.scale(L / d, L / d, a));
+    ctx.modified();
+    ctx.msg('축척을 맞췄습니다: ' + G.fmt(d, 1) + ' → ' + G.fmt(L, 1) + 'mm (×' + G.fmt(L / d, 4) + '). 밑그림 폭 ' + G.fmt(G.len(e.u), 0) + 'mm');
   });
 
   // ---- 조회 ----
@@ -4447,7 +4594,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   function scheduleAutosave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
-      if (!lsSet(AUTOSAVE, snapshot())) msg('브라우저 자동 저장 공간이 모자랍니다. 작업 파일로 저장해 주세요.', 'err');
+      if (!lsSet(AUTOSAVE, NS.Images.serialize(App.doc))) msg('자동 보관 공간이 모자랍니다(밑그림이 크면 그렇습니다). 작업 파일로 저장해 주세요.', 'err');
     }, 800);
   }
 
@@ -4473,7 +4620,9 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     addBehind: function (e) { // 해치처럼 다른 객체 뒤에 그릴 것
       ctx.change();
       if (!e.id || index.has(e.id)) e.id = App.doc.nextId++;
-      App.doc.ents.unshift(e); index.set(e.id, e);
+      var at = 0; // 밑그림은 언제나 맨 뒤, 해치는 그 위
+      if (e.type !== 'image') while (at < App.doc.ents.length && App.doc.ents[at].type === 'image') at++;
+      App.doc.ents.splice(at, 0, e); index.set(e.id, e);
       markChanged();
       return e;
     },
@@ -4502,6 +4651,8 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     viewBox: function () { return App.R.viewBox(); },
     zoomExtents: function () { zoomExtents(); },
     selectedEnts: function () { var s = selectedEnts(); App.sel.clear(); return s; },
+    pickImage: function () { $('#imgfile').click(); },
+    takeImage: function () { var im = App.pendingImage; App.pendingImage = null; return im; },
     clipboard: function () {
       if (App.clip) return App.clip;
       try { return JSON.parse(lsGet(CLIP) || 'null'); } catch (e) { return null; }
@@ -4941,6 +5092,8 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     needBlocks(list);
     list.forEach(function (e) { var l = Model.layerOf(App.doc, e.layer); if (l) layers[l.name] = l; var eb = Model.bounds(e, App.doc); if (G.boxValid(eb)) b = G.boxUnion(b, eb); });
     App.clip = Model.clone({ ents: list, blocks: blocks, layers: Object.keys(layers).map(function (k) { return layers[k]; }), base: { x: b.x0, y: b.y0 } });
+    var imgs = NS.Images.pack(App.doc, list);
+    if (imgs) App.clip.images = imgs;
     lsSet(CLIP, JSON.stringify(App.clip));
     msg(list.length + '개를 복사했습니다. Ctrl+V로 붙여 넣습니다 (다른 도면에도 됩니다).', 'ok');
   }
@@ -5222,6 +5375,18 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
         if (Model.prims(e, doc).dense) { var hd = document.createElement('p'); hd.className = 'hint'; hd.textContent = '무늬가 너무 촘촘해 경계만 보입니다. 무늬 축척을 키워 주세요.'; pane.appendChild(hd); }
         break;
       }
+      case 'image': {
+        field(pane, '그림', e.name || '', null, { readonly: true });
+        field(pane, '픽셀', e.iw + ' × ' + e.ih, null, { readonly: true });
+        field(pane, '폭 (mm)', f(G.len(e.u)), function (v) { if (v > 0) edit(function () { var k = v / G.len(e.u); Model.transform(e, M.scale(k, k, e.p)); }); });
+        field(pane, '높이 (mm)', f(G.len(e.v)), null, { readonly: true });
+        field(pane, '진하기 %', G.fmt((e.alpha === undefined ? 0.5 : e.alpha) * 100, 0), function (v) { edit(function () { e.alpha = Math.max(0.05, Math.min(1, v / 100)); }); });
+        field(pane, '인쇄·PDF에 넣기', !!e.plot, function (v) { edit(function () { e.plot = v; }); }, { check: true });
+        var hi2 = document.createElement('p'); hi2.className = 'hint';
+        hi2.textContent = '밑그림은 DXF에 들어가지 않습니다. 따라 그릴 때 도면층 \'밑그림\'을 잠그면 실수로 고르지 않습니다. 축척은 크기(SC) → 참조(R)로도 맞출 수 있습니다.';
+        pane.appendChild(hi2);
+        break;
+      }
       case 'dim': {
         var dg = Model.dimGeom(e, doc);
         field(pane, '측정값', f(dg.value), null, { readonly: true });
@@ -5316,11 +5481,13 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   function saveDXF(opts) {
     var data;
     try { data = NS.DXF.write(App.doc); } catch (err) { return Promise.resolve(saveFailed('DXF')(err)); }
+    var nImg = App.doc.ents.filter(function (e) { return e.type === 'image'; }).length;
     return saveFile(baseName() + '.dxf', data, 'application/dxf', 'dxf', opts)
-      .then(saved('dxf', 'DXF(R12)로 저장했습니다 (치수·타원·여러 줄 문자는 선과 문자로 풀어서 저장): '), saveFailed('DXF'));
+      .then(saved('dxf', 'DXF(R12)로 저장했습니다 (치수·타원·여러 줄 문자는 선과 문자로 풀어서 저장): '), saveFailed('DXF'))
+      .then(function (ok) { if (ok && nImg) msg('밑그림 ' + nImg + '개는 DXF에 넣지 않았습니다 (작업 파일에는 들어 있습니다).'); return ok; });
   }
   function saveWork(opts) {
-    return saveFile(baseName() + '.dcad.json', JSON.stringify(App.doc), 'application/json', 'work', opts)
+    return saveFile(baseName() + '.dcad.json', NS.Images.serialize(App.doc), 'application/json', 'work', opts)
       .then(saved('work', '작업 파일로 저장했습니다 (치수·벽·블록 정보가 그대로 남습니다): '), saveFailed('작업 파일'));
   }
   // Ctrl+S: 작업 파일을 열었으면 작업 파일로, 아니면 DXF로. Ctrl+Shift+S는 다른 이름으로
@@ -5352,7 +5519,40 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     if (!okToReplace()) return;
     Desk.read(p).then(function (f) { openData(f.name, f.data, f.path); }, function (err) { msg('열기 실패: ' + (err && err.message || err), 'err'); });
   }
+  // 그림 파일인지 (DXF의 형식 이름이 image/vnd.dxf라서 확장자를 먼저 본다)
+  function isImageFile(file) {
+    var n = file.name || '';
+    if (/\.(dxf|json|dcad)$/i.test(n)) return false;
+    return /\.(png|jpe?g|gif|bmp|webp)$/i.test(n) || /^image\/(png|jpeg|gif|bmp|webp)$/i.test(file.type || '');
+  }
+  // 밑그림 그림 파일 읽기: 긴 변이 2400픽셀을 넘거나 파일이 크면 줄여 JPEG로 (작업 파일·자동 보관이 너무 커지지 않도록)
+  var IMG_MAX = 2400;
+  function loadImageFile(file) {
+    if (!isImageFile(file)) { msg('그림 파일(PNG·JPG 등)만 밑그림으로 넣을 수 있습니다. PDF 평면도는 화면을 캡처해 그림 파일로 넣어 주세요.', 'err'); return; }
+    var reader = new FileReader();
+    reader.onerror = function () { msg('그림 파일을 읽지 못했습니다.', 'err'); };
+    reader.onload = function () {
+      var im = new Image();
+      im.onerror = function () { msg('그림을 읽지 못했습니다: ' + (file.name || ''), 'err'); };
+      im.onload = function () {
+        var w = im.naturalWidth, h = im.naturalHeight, k = Math.min(1, IMG_MAX / Math.max(w, h)), src = reader.result;
+        if (k < 1 || src.length > 1.5e6) {
+          var c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+          var g2 = c.getContext('2d');
+          g2.fillStyle = '#ffffff'; g2.fillRect(0, 0, c.width, c.height);
+          g2.drawImage(im, 0, 0, c.width, c.height);
+          src = c.toDataURL('image/jpeg', 0.88); w = c.width; h = c.height;
+        }
+        App.pendingImage = { ref: NS.Images.put(src), iw: w, ih: h, name: file.name || '그림' };
+        Engine.start('_IMAGEPLACE');
+      };
+      im.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
   function openFile(file) {
+    if (isImageFile(file)) { loadImageFile(file); return; }
     var fp = Desk && Desk.pathOf(file);
     if (fp) { openPath(fp); return; }
     if (!okToReplace()) return;
@@ -5366,6 +5566,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       try {
         var d = JSON.parse(new TextDecoder('utf-8').decode(bytes));
         if (d.format !== 'daedong-cad') throw new Error('대동 CAD 작업 파일이 아닙니다.');
+        NS.Images.unpack(d);
         replaceDoc(d, path ? { path: path, name: name, kind: 'work', ours: true } : null);
         msg('열었습니다: ' + (path || name), 'ok');
       } catch (err) { msg('열기 실패: ' + err.message, 'err'); }
@@ -5481,7 +5682,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     var body = $('#help-body');
     if (!body.childNodes.length) {
       var groups = [
-        ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'HATCH', 'INSERT', 'BLOCK', 'SHEET']],
+        ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'HATCH', 'INSERT', 'BLOCK', 'IMAGE', 'SHEET']],
         ['치수', ['DIMLIN', 'DIMALI', 'DIMRAD', 'DIMDIA', 'DIMANG', 'EDITTEXT']],
         ['수정', ['MOVE', 'COPY', 'ROTATE', 'MIRROR', 'SCALE', 'STRETCH', 'OFFSET', 'TRIM', 'EXTEND', 'BREAK', 'FILLET', 'CHAMFER', 'ARRAY', 'ARRAYPOLAR', 'JOIN', 'EXPLODE', 'ERASE']],
         ['재기·보기', ['DIST', 'AREA', 'QTO', 'ZOOMEXT']]
@@ -5547,6 +5748,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
         switch (b.dataset.act) {
           case 'new': openNew(); break;
           case 'open': openAsk(); break;
+          case 'recent': recentPop(b); break;
           case 'save': saveDXF(); break;
           case 'savework': saveWork(); break;
           case 'png': exportPNG(); break;
@@ -5577,17 +5779,19 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       exportFile(baseName() + '-물량.csv', Cmd.quantitiesCSV(App.qto.q, (App.doc.name || '도면') + ' 물량 (' + App.qto.scope + ')'), 'text/csv', 'csv', '물량표를 CSV로 저장했습니다 (엑셀에서 열림)');
     });
     $('#file').addEventListener('change', function () { var f = this.files[0]; if (f) openFile(f); this.value = ''; });
+    $('#imgfile').addEventListener('change', function () { var f = this.files[0]; if (f) loadImageFile(f); this.value = ''; });
+    NS.Images.onLoad(function () { Model.touch(); redraw(); });
     // 끌어다 놓기
     var stage = $('#stage');
     stage.addEventListener('dragover', function (ev) { ev.preventDefault(); $('#drop').classList.add('show'); });
     stage.addEventListener('dragleave', function () { $('#drop').classList.remove('show'); });
     stage.addEventListener('drop', function (ev) { ev.preventDefault(); $('#drop').classList.remove('show'); var f = ev.dataTransfer.files[0]; if (f) openFile(f); });
-    g.addEventListener('beforeunload', function () { if (App.doc) lsSet(AUTOSAVE, snapshot()); });
+    g.addEventListener('beforeunload', function () { if (App.doc) lsSet(AUTOSAVE, NS.Images.serialize(App.doc)); });
 
     // 자동 저장본이 있으면 이어서, 없으면 새 도면 고르기
     var saved = lsGet(AUTOSAVE), restored = false;
     if (saved) {
-      try { var d = JSON.parse(saved); if (d && d.format === 'daedong-cad') { setDoc(d); restored = true; msg('지난 작업을 이어서 엽니다: ' + (d.name || '도면') + '. 새로 시작하려면 [새 도면].', 'ok'); } } catch (e) { restored = false; }
+      try { var d = NS.Images.unpack(JSON.parse(saved)); if (d && d.format === 'daedong-cad') { setDoc(d); restored = true; msg('지난 작업을 이어서 엽니다: ' + (d.name || '도면') + '. 새로 시작하려면 [새 도면].', 'ok'); } } catch (e) { restored = false; }
     }
     if (!restored) {
       setDoc(Lib.newFromTemplate('remodel', { date: new Date().toISOString().slice(0, 10) }));
@@ -5617,6 +5821,26 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     $$('#side .pane').forEach(function (p) { p.classList.toggle('on', p.id === 'pane-' + name); });
     if (name === 'lib') renderLib();
     if (name === 'props') refreshProps();
+  }
+  // 데스크톱: 최근 도면 목록 (열기 옆 [최근 ▾])
+  function recentPop(btn) {
+    closePops();
+    Desk.recent().then(function (list) {
+      var pop = document.createElement('div'); pop.className = 'pop recent-list';
+      if (!list.length) { var em = document.createElement('div'); em.className = 'hint'; em.textContent = '아직 열거나 저장한 도면이 없습니다.'; pop.appendChild(em); }
+      list.forEach(function (f) {
+        var it = document.createElement('button'); it.type = 'button'; it.title = f.path;
+        var nm = document.createElement('b'); nm.textContent = f.name;
+        var dir = document.createElement('small'); dir.textContent = f.dir;
+        it.appendChild(nm); it.appendChild(dir);
+        it.onclick = function () { closePops(); openPath(f.path); };
+        pop.appendChild(it);
+      });
+      document.body.appendChild(pop);
+      var r = btn.getBoundingClientRect();
+      pop.style.left = Math.max(4, Math.min(r.left, g.innerWidth - 380)) + 'px'; pop.style.top = (r.bottom + 4) + 'px';
+      setTimeout(function () { document.addEventListener('mousedown', function off(e2) { if (!pop.contains(e2.target)) { closePops(); document.removeEventListener('mousedown', off); } }); }, 0);
+    }, function (err) { msg('최근 목록을 읽지 못했습니다: ' + (err && err.message || err), 'err'); });
   }
   function osnapPop(ev) {
     closePops();

@@ -76,6 +76,12 @@
           if (!segs.length) return '';
           return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '" stroke-width="' + n(lwk) + '"/>';
         }
+        case 'image': {
+          var isrc = e.plot && NS.Images && NS.Images.src(e.ref);
+          if (!isrc || !e.iw || !e.ih) return '';
+          var im = [e.u.x / e.iw, e.u.y / e.iw, -e.v.x / e.ih, -e.v.y / e.ih, e.p.x + e.v.x, e.p.y + e.v.y];
+          return '<image href="' + isrc + '" width="' + e.iw + '" height="' + e.ih + '" preserveAspectRatio="none" transform="matrix(' + im.map(function (x) { return String(Math.round(x * 1e6) / 1e6); }).join(' ') + ')" opacity="' + n(e.alpha === undefined ? 0.5 : e.alpha) + '"' + (mono ? ' style="filter:grayscale(1)"' : '') + '/>';
+        }
         case 'point': return '<circle cx="' + n(e.p.x) + '" cy="' + n(e.p.y) + '" r="' + n(sw) + '" fill="' + col + '" stroke="none"/>';
         case 'text': return text(e.p, e.h, e.rot, e.s, e.align, e.valign, col);
         case 'mtext': return (Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).map(function (t) { return text(t.p, t.h, t.rot, t.s, t.align, t.valign, col); }).join('');

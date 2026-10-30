@@ -13,7 +13,7 @@
       if (closed && pts.length > 2) segs.push([pts[pts.length - 1], pts[0]]);
     }
     ents.forEach(function (e) {
-      if (e.type === 'hatch' || e.type === 'text' || e.type === 'mtext' || e.type === 'dim' || e.type === 'point') return;
+      if (e.type === 'hatch' || e.type === 'image' || e.type === 'text' || e.type === 'mtext' || e.type === 'dim' || e.type === 'point') return;
       Model.prims(e, doc).forEach(function (pr) {
         if (pr.hp || pr.hb) return;
         if (pr.k === 'L') segs.push([pr.a, pr.b]);

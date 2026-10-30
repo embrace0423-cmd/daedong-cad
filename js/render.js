@@ -12,6 +12,7 @@
     this.view = { cx: 0, cy: 0, scale: 1 };
     this.dark = true;
     this.showLw = false; this.lwPx = 4; // 선 굵기 보이기, 종이 1mm당 화면 픽셀
+    this.output = false; // PNG 내보내기: 밑그림은 '인쇄에 넣기'한 것만, 테두리 없이
     this.w = 0; this.h = 0; this.dpr = 1;
   }
   Renderer.prototype.resize = function () {
@@ -149,6 +150,19 @@
           pr.forEach(function (q) { if (q.hb) { ctx.moveTo(q.pts[0].x, q.pts[0].y); for (var t = 1; t < q.pts.length; t++) ctx.lineTo(q.pts[t].x, q.pts[t].y); ctx.closePath(); } });
           ctx.stroke();
         }
+        break;
+      }
+      case 'image': {
+        if (this.output && !e.plot) break;
+        var im = NS.Images && NS.Images.el(e.ref);
+        if (im && e.iw && e.ih) {
+          ctx.save();
+          ctx.globalAlpha = e.alpha === undefined ? 0.5 : e.alpha;
+          ctx.transform(e.u.x / e.iw, e.u.y / e.iw, -e.v.x / e.ih, -e.v.y / e.ih, e.p.x + e.v.x, e.p.y + e.v.y);
+          ctx.drawImage(im, 0, 0);
+          ctx.restore();
+        }
+        if (!this.output) { this.pathPoly(ctx, Model.imageCorners(e), true); ctx.stroke(); }
         break;
       }
       case 'point': {
@@ -329,6 +343,7 @@
     canvas.width = w; canvas.height = h;
     r.w = w; r.h = h; r.dpr = 1; r.dark = false;
     r.showLw = true; r.lwPx = pxPerMm * (doc.settings.scale || 1); // 종이 mm 굵기 그대로
+    r.output = true;
     r.view = { cx: (box.x0 + box.x1) / 2, cy: (box.y0 + box.y1) / 2, scale: pxPerMm };
     var ctx = r.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);

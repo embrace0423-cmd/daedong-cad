@@ -262,6 +262,23 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   check(dq.suggestedFilename().endsWith('-물량.csv') && qcsv.charCodeAt(0) === 0xfeff && /여닫이문 900,DOOR_900,1,개/.test(qcsv), '물량 CSV (엑셀용 BOM, 한글)');
   await page.click('#dlg-qto [data-close]');
 
+  // 밑그림: 그림 파일 → 왼쪽 아래 구석 → 폭 4000 → 두 점 사이 2000을 실제 3000으로 맞춤 → 폭 6000
+  const pngB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 400; c.height = 300;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 400, 300);
+    g.strokeStyle = '#000'; g.lineWidth = 8; g.strokeRect(20, 20, 360, 260); g.beginPath(); g.moveTo(200, 20); g.lineTo(200, 280); g.stroke();
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.setInputFiles('#imgfile', { name: '기존 평면도.png', mimeType: 'image/png', buffer: Buffer.from(pngB64, 'base64') });
+  await page.waitForFunction(() => DCAD.App.Engine.cur && DCAD.App.Engine.cur.key === '_IMAGEPLACE');
+  await runAll(['60000,0', '4000', '60000,0', '62000,0', '3000']);
+  const im = await page.evaluate(() => {
+    const e = DCAD.App.doc.ents.find((x) => x.type === 'image');
+    return e && { w: Math.hypot(e.u.x, e.u.y), h: Math.hypot(e.v.x, e.v.y), layer: e.layer, first: DCAD.App.doc.ents[0] === e, loaded: !!DCAD.Images.el(e.ref), p: e.p };
+  });
+  check(im && Math.abs(im.w - 6000) < 1e-6 && Math.abs(im.h - 4500) < 1e-6 && im.p.x === 60000 && im.layer === '밑그림' && im.first && im.loaded,
+    '밑그림: 넣기 → 두 점으로 축척 맞추기 (폭 ' + (im && im.w) + '·높이 ' + (im && im.h) + 'mm, 도면층 밑그림, 맨 뒤)');
+
   // 인쇄 준비 (실제 인쇄창은 막음)
   await page.evaluate(() => { window.print = () => { window.__printed = true; }; });
   await page.click('[data-act=print]');
@@ -279,12 +296,17 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   await dl.saveAs(dxfPath);
   check(fs.statSync(dxfPath).size > 1000, 'DXF 저장 (' + fs.statSync(dxfPath).size + ' bytes)');
   check(dl.suggestedFilename() === '리모델링 평면도.dxf', '저장 파일 이름 = 도면 이름 (' + dl.suggestedFilename() + ')');
+  await page.waitForTimeout(100);
+  check(/밑그림 1개는 DXF에 넣지 않았습니다/.test(await history()) && !/IMAGE/.test(fs.readFileSync(dxfPath, 'latin1')), 'DXF에는 밑그림을 넣지 않고 알려 줌');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=svg]')]);
   await dl2.saveAs(path.join(OUT, 'e2e-remodel.svg'));
   const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=png]')]);
   await dl3.saveAs(path.join(OUT, 'e2e-remodel.png'));
   const [dl4] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=savework]')]);
   await dl4.saveAs(path.join(OUT, 'e2e-remodel.dcad.json'));
+  const wj = JSON.parse(fs.readFileSync(path.join(OUT, 'e2e-remodel.dcad.json'), 'utf8'));
+  const wimg = wj.ents.find((e) => e.type === 'image');
+  check(wimg && wj.images && Object.keys(wj.images).length === 1 && /^data:image\/png;base64,/.test(wj.images[wimg.ref]), '작업 파일에 밑그림 그림이 함께 저장됨');
 
   // 14) 다시 열기: 저장한 DXF를 열어 개체 수 비교
   const dxfText = fs.readFileSync(dxfPath);

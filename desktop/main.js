@@ -34,10 +34,24 @@ function fileArg(argv) {
   return null;
 }
 
+// 최근 도면 (열거나 저장한 DXF·작업 파일, 10개까지). 앱 자료 폴더의 recent.json에 둔다
+const RECENT_MAX = 10;
+function recentPath() { return path.join(app.getPath('userData'), 'recent.json'); }
+function loadRecent() {
+  try { return JSON.parse(fs.readFileSync(recentPath(), 'utf8')).filter((p) => typeof p === 'string'); } catch (e) { return []; }
+}
+function pushRecent(p) {
+  if (!OPENABLE.test(p)) return;
+  const list = [p].concat(loadRecent().filter((q) => q.toLowerCase() !== p.toLowerCase())).slice(0, RECENT_MAX);
+  try { fs.writeFileSync(recentPath(), JSON.stringify(list)); } catch (e) { /* 기록 실패는 무시 */ }
+  if (process.platform === 'win32') app.addRecentDocument(p);
+}
+
 function readDoc(p) {
   const data = fs.readFileSync(p);
   known.add(p);
   lastDir = path.dirname(p);
+  pushRecent(p);
   return { path: p, name: path.basename(p), data };
 }
 
@@ -59,10 +73,14 @@ function writeOut(p, data) {
   fs.writeFileSync(p, typeof data === 'string' ? data : Buffer.from(data));
   known.add(p);
   lastDir = path.dirname(p);
+  pushRecent(p);
   return { path: p, name: path.basename(p) };
 }
 
 ipcMain.handle('dcad:info', () => ({ version: app.getVersion() }));
+ipcMain.handle('dcad:recent', () => loadRecent()
+  .filter((p) => { try { return fs.statSync(p).isFile(); } catch (e) { return false; } })
+  .map((p) => ({ path: p, name: path.basename(p), dir: path.dirname(p) })));
 ipcMain.handle('dcad:initial', () => {
   const f = firstFile;
   firstFile = null;

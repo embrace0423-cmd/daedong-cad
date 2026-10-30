@@ -83,7 +83,7 @@
   function scheduleAutosave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
-      if (!lsSet(AUTOSAVE, snapshot())) msg('브라우저 자동 저장 공간이 모자랍니다. 작업 파일로 저장해 주세요.', 'err');
+      if (!lsSet(AUTOSAVE, NS.Images.serialize(App.doc))) msg('자동 보관 공간이 모자랍니다(밑그림이 크면 그렇습니다). 작업 파일로 저장해 주세요.', 'err');
     }, 800);
   }
 
@@ -109,7 +109,9 @@
     addBehind: function (e) { // 해치처럼 다른 객체 뒤에 그릴 것
       ctx.change();
       if (!e.id || index.has(e.id)) e.id = App.doc.nextId++;
-      App.doc.ents.unshift(e); index.set(e.id, e);
+      var at = 0; // 밑그림은 언제나 맨 뒤, 해치는 그 위
+      if (e.type !== 'image') while (at < App.doc.ents.length && App.doc.ents[at].type === 'image') at++;
+      App.doc.ents.splice(at, 0, e); index.set(e.id, e);
       markChanged();
       return e;
     },
@@ -138,6 +140,8 @@
     viewBox: function () { return App.R.viewBox(); },
     zoomExtents: function () { zoomExtents(); },
     selectedEnts: function () { var s = selectedEnts(); App.sel.clear(); return s; },
+    pickImage: function () { $('#imgfile').click(); },
+    takeImage: function () { var im = App.pendingImage; App.pendingImage = null; return im; },
     clipboard: function () {
       if (App.clip) return App.clip;
       try { return JSON.parse(lsGet(CLIP) || 'null'); } catch (e) { return null; }
@@ -577,6 +581,8 @@
     needBlocks(list);
     list.forEach(function (e) { var l = Model.layerOf(App.doc, e.layer); if (l) layers[l.name] = l; var eb = Model.bounds(e, App.doc); if (G.boxValid(eb)) b = G.boxUnion(b, eb); });
     App.clip = Model.clone({ ents: list, blocks: blocks, layers: Object.keys(layers).map(function (k) { return layers[k]; }), base: { x: b.x0, y: b.y0 } });
+    var imgs = NS.Images.pack(App.doc, list);
+    if (imgs) App.clip.images = imgs;
     lsSet(CLIP, JSON.stringify(App.clip));
     msg(list.length + '개를 복사했습니다. Ctrl+V로 붙여 넣습니다 (다른 도면에도 됩니다).', 'ok');
   }
@@ -858,6 +864,18 @@
         if (Model.prims(e, doc).dense) { var hd = document.createElement('p'); hd.className = 'hint'; hd.textContent = '무늬가 너무 촘촘해 경계만 보입니다. 무늬 축척을 키워 주세요.'; pane.appendChild(hd); }
         break;
       }
+      case 'image': {
+        field(pane, '그림', e.name || '', null, { readonly: true });
+        field(pane, '픽셀', e.iw + ' × ' + e.ih, null, { readonly: true });
+        field(pane, '폭 (mm)', f(G.len(e.u)), function (v) { if (v > 0) edit(function () { var k = v / G.len(e.u); Model.transform(e, M.scale(k, k, e.p)); }); });
+        field(pane, '높이 (mm)', f(G.len(e.v)), null, { readonly: true });
+        field(pane, '진하기 %', G.fmt((e.alpha === undefined ? 0.5 : e.alpha) * 100, 0), function (v) { edit(function () { e.alpha = Math.max(0.05, Math.min(1, v / 100)); }); });
+        field(pane, '인쇄·PDF에 넣기', !!e.plot, function (v) { edit(function () { e.plot = v; }); }, { check: true });
+        var hi2 = document.createElement('p'); hi2.className = 'hint';
+        hi2.textContent = '밑그림은 DXF에 들어가지 않습니다. 따라 그릴 때 도면층 \'밑그림\'을 잠그면 실수로 고르지 않습니다. 축척은 크기(SC) → 참조(R)로도 맞출 수 있습니다.';
+        pane.appendChild(hi2);
+        break;
+      }
       case 'dim': {
         var dg = Model.dimGeom(e, doc);
         field(pane, '측정값', f(dg.value), null, { readonly: true });
@@ -952,11 +970,13 @@
   function saveDXF(opts) {
     var data;
     try { data = NS.DXF.write(App.doc); } catch (err) { return Promise.resolve(saveFailed('DXF')(err)); }
+    var nImg = App.doc.ents.filter(function (e) { return e.type === 'image'; }).length;
     return saveFile(baseName() + '.dxf', data, 'application/dxf', 'dxf', opts)
-      .then(saved('dxf', 'DXF(R12)로 저장했습니다 (치수·타원·여러 줄 문자는 선과 문자로 풀어서 저장): '), saveFailed('DXF'));
+      .then(saved('dxf', 'DXF(R12)로 저장했습니다 (치수·타원·여러 줄 문자는 선과 문자로 풀어서 저장): '), saveFailed('DXF'))
+      .then(function (ok) { if (ok && nImg) msg('밑그림 ' + nImg + '개는 DXF에 넣지 않았습니다 (작업 파일에는 들어 있습니다).'); return ok; });
   }
   function saveWork(opts) {
-    return saveFile(baseName() + '.dcad.json', JSON.stringify(App.doc), 'application/json', 'work', opts)
+    return saveFile(baseName() + '.dcad.json', NS.Images.serialize(App.doc), 'application/json', 'work', opts)
       .then(saved('work', '작업 파일로 저장했습니다 (치수·벽·블록 정보가 그대로 남습니다): '), saveFailed('작업 파일'));
   }
   // Ctrl+S: 작업 파일을 열었으면 작업 파일로, 아니면 DXF로. Ctrl+Shift+S는 다른 이름으로
@@ -988,7 +1008,40 @@
     if (!okToReplace()) return;
     Desk.read(p).then(function (f) { openData(f.name, f.data, f.path); }, function (err) { msg('열기 실패: ' + (err && err.message || err), 'err'); });
   }
+  // 그림 파일인지 (DXF의 형식 이름이 image/vnd.dxf라서 확장자를 먼저 본다)
+  function isImageFile(file) {
+    var n = file.name || '';
+    if (/\.(dxf|json|dcad)$/i.test(n)) return false;
+    return /\.(png|jpe?g|gif|bmp|webp)$/i.test(n) || /^image\/(png|jpeg|gif|bmp|webp)$/i.test(file.type || '');
+  }
+  // 밑그림 그림 파일 읽기: 긴 변이 2400픽셀을 넘거나 파일이 크면 줄여 JPEG로 (작업 파일·자동 보관이 너무 커지지 않도록)
+  var IMG_MAX = 2400;
+  function loadImageFile(file) {
+    if (!isImageFile(file)) { msg('그림 파일(PNG·JPG 등)만 밑그림으로 넣을 수 있습니다. PDF 평면도는 화면을 캡처해 그림 파일로 넣어 주세요.', 'err'); return; }
+    var reader = new FileReader();
+    reader.onerror = function () { msg('그림 파일을 읽지 못했습니다.', 'err'); };
+    reader.onload = function () {
+      var im = new Image();
+      im.onerror = function () { msg('그림을 읽지 못했습니다: ' + (file.name || ''), 'err'); };
+      im.onload = function () {
+        var w = im.naturalWidth, h = im.naturalHeight, k = Math.min(1, IMG_MAX / Math.max(w, h)), src = reader.result;
+        if (k < 1 || src.length > 1.5e6) {
+          var c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+          var g2 = c.getContext('2d');
+          g2.fillStyle = '#ffffff'; g2.fillRect(0, 0, c.width, c.height);
+          g2.drawImage(im, 0, 0, c.width, c.height);
+          src = c.toDataURL('image/jpeg', 0.88); w = c.width; h = c.height;
+        }
+        App.pendingImage = { ref: NS.Images.put(src), iw: w, ih: h, name: file.name || '그림' };
+        Engine.start('_IMAGEPLACE');
+      };
+      im.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
   function openFile(file) {
+    if (isImageFile(file)) { loadImageFile(file); return; }
     var fp = Desk && Desk.pathOf(file);
     if (fp) { openPath(fp); return; }
     if (!okToReplace()) return;
@@ -1002,6 +1055,7 @@
       try {
         var d = JSON.parse(new TextDecoder('utf-8').decode(bytes));
         if (d.format !== 'daedong-cad') throw new Error('대동 CAD 작업 파일이 아닙니다.');
+        NS.Images.unpack(d);
         replaceDoc(d, path ? { path: path, name: name, kind: 'work', ours: true } : null);
         msg('열었습니다: ' + (path || name), 'ok');
       } catch (err) { msg('열기 실패: ' + err.message, 'err'); }
@@ -1117,7 +1171,7 @@
     var body = $('#help-body');
     if (!body.childNodes.length) {
       var groups = [
-        ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'HATCH', 'INSERT', 'BLOCK', 'SHEET']],
+        ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'HATCH', 'INSERT', 'BLOCK', 'IMAGE', 'SHEET']],
         ['치수', ['DIMLIN', 'DIMALI', 'DIMRAD', 'DIMDIA', 'DIMANG', 'EDITTEXT']],
         ['수정', ['MOVE', 'COPY', 'ROTATE', 'MIRROR', 'SCALE', 'STRETCH', 'OFFSET', 'TRIM', 'EXTEND', 'BREAK', 'FILLET', 'CHAMFER', 'ARRAY', 'ARRAYPOLAR', 'JOIN', 'EXPLODE', 'ERASE']],
         ['재기·보기', ['DIST', 'AREA', 'QTO', 'ZOOMEXT']]
@@ -1183,6 +1237,7 @@
         switch (b.dataset.act) {
           case 'new': openNew(); break;
           case 'open': openAsk(); break;
+          case 'recent': recentPop(b); break;
           case 'save': saveDXF(); break;
           case 'savework': saveWork(); break;
           case 'png': exportPNG(); break;
@@ -1213,17 +1268,19 @@
       exportFile(baseName() + '-물량.csv', Cmd.quantitiesCSV(App.qto.q, (App.doc.name || '도면') + ' 물량 (' + App.qto.scope + ')'), 'text/csv', 'csv', '물량표를 CSV로 저장했습니다 (엑셀에서 열림)');
     });
     $('#file').addEventListener('change', function () { var f = this.files[0]; if (f) openFile(f); this.value = ''; });
+    $('#imgfile').addEventListener('change', function () { var f = this.files[0]; if (f) loadImageFile(f); this.value = ''; });
+    NS.Images.onLoad(function () { Model.touch(); redraw(); });
     // 끌어다 놓기
     var stage = $('#stage');
     stage.addEventListener('dragover', function (ev) { ev.preventDefault(); $('#drop').classList.add('show'); });
     stage.addEventListener('dragleave', function () { $('#drop').classList.remove('show'); });
     stage.addEventListener('drop', function (ev) { ev.preventDefault(); $('#drop').classList.remove('show'); var f = ev.dataTransfer.files[0]; if (f) openFile(f); });
-    g.addEventListener('beforeunload', function () { if (App.doc) lsSet(AUTOSAVE, snapshot()); });
+    g.addEventListener('beforeunload', function () { if (App.doc) lsSet(AUTOSAVE, NS.Images.serialize(App.doc)); });
 
     // 자동 저장본이 있으면 이어서, 없으면 새 도면 고르기
     var saved = lsGet(AUTOSAVE), restored = false;
     if (saved) {
-      try { var d = JSON.parse(saved); if (d && d.format === 'daedong-cad') { setDoc(d); restored = true; msg('지난 작업을 이어서 엽니다: ' + (d.name || '도면') + '. 새로 시작하려면 [새 도면].', 'ok'); } } catch (e) { restored = false; }
+      try { var d = NS.Images.unpack(JSON.parse(saved)); if (d && d.format === 'daedong-cad') { setDoc(d); restored = true; msg('지난 작업을 이어서 엽니다: ' + (d.name || '도면') + '. 새로 시작하려면 [새 도면].', 'ok'); } } catch (e) { restored = false; }
     }
     if (!restored) {
       setDoc(Lib.newFromTemplate('remodel', { date: new Date().toISOString().slice(0, 10) }));
@@ -1253,6 +1310,26 @@
     $$('#side .pane').forEach(function (p) { p.classList.toggle('on', p.id === 'pane-' + name); });
     if (name === 'lib') renderLib();
     if (name === 'props') refreshProps();
+  }
+  // 데스크톱: 최근 도면 목록 (열기 옆 [최근 ▾])
+  function recentPop(btn) {
+    closePops();
+    Desk.recent().then(function (list) {
+      var pop = document.createElement('div'); pop.className = 'pop recent-list';
+      if (!list.length) { var em = document.createElement('div'); em.className = 'hint'; em.textContent = '아직 열거나 저장한 도면이 없습니다.'; pop.appendChild(em); }
+      list.forEach(function (f) {
+        var it = document.createElement('button'); it.type = 'button'; it.title = f.path;
+        var nm = document.createElement('b'); nm.textContent = f.name;
+        var dir = document.createElement('small'); dir.textContent = f.dir;
+        it.appendChild(nm); it.appendChild(dir);
+        it.onclick = function () { closePops(); openPath(f.path); };
+        pop.appendChild(it);
+      });
+      document.body.appendChild(pop);
+      var r = btn.getBoundingClientRect();
+      pop.style.left = Math.max(4, Math.min(r.left, g.innerWidth - 380)) + 'px'; pop.style.top = (r.bottom + 4) + 'px';
+      setTimeout(function () { document.addEventListener('mousedown', function off(e2) { if (!pop.contains(e2.target)) { closePops(); document.removeEventListener('mousedown', off); } }); }, 0);
+    }, function (err) { msg('최근 목록을 읽지 못했습니다: ' + (err && err.message || err), 'err'); });
   }
   function osnapPop(ev) {
     closePops();

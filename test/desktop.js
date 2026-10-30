@@ -182,6 +182,38 @@ async function waitFile(p, pred, ms) {
   const net = await page.evaluate(() => fetch('https://example.com/').then(() => 'ok', () => 'blocked'));
   check(net === 'blocked', '인터넷 요청 차단 (도면이 밖으로 나가지 않음)');
 
+  // 10-1) 밑그림: 그림 넣기(축척 맞추기는 건너뜀) → 작업 파일로 저장 → 다시 열면 그림까지 그대로
+  const pngB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 320; c.height = 240;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 320, 240); g.strokeStyle = '#000'; g.lineWidth = 6; g.strokeRect(10, 10, 300, 220);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.setInputFiles('#imgfile', { name: '평면도 사진.png', mimeType: 'image/png', buffer: Buffer.from(pngB64, 'base64') });
+  await page.waitForFunction(() => DCAD.App.Engine.cur && DCAD.App.Engine.cur.key === '_IMAGEPLACE');
+  await command(page, ['0,-8000', '8000', '']);
+  const imgWork = path.join(outDir, '밑그림.dcad.json');
+  await plan(app, 'save', imgWork);
+  await page.click('[data-act=savework]');
+  wb = await waitFile(imgWork);
+  const wj = wb && JSON.parse(wb.toString('utf8'));
+  check(wj && wj.ents.some((e) => e.type === 'image' && e.layer === '밑그림') && Object.keys(wj.images || {}).length === 1, '밑그림을 넣고 작업 파일로 저장 (그림 데이터 포함)');
+  await page.evaluate(() => { DCAD.App.doc.ents = DCAD.App.doc.ents.filter((e) => e.type !== 'image'); DCAD.Model.touch(); });
+  await plan(app, 'open', imgWork);
+  await page.keyboard.press('Control+o');
+  await page.waitForFunction(() => DCAD.App.file && DCAD.App.file.name === '밑그림.dcad.json' && DCAD.App.doc.ents.some((e) => e.type === 'image' && DCAD.Images.el(e.ref)));
+  check(true, '그 작업 파일을 다시 열면 밑그림 그림이 보임');
+
+  // 10-2) 최근 목록: 방금 연 파일이 맨 위, 내보낸 그림·PDF는 빠짐, 눌러서 열기
+  await page.click('[data-act=recent]');
+  await page.waitForSelector('.recent-list button');
+  const rec = await page.$$eval('.recent-list button b', (bs) => bs.map((b) => b.textContent));
+  await page.screenshot({ path: path.join(outDir, 'desktop-recent.png') });
+  check(rec[0] === '밑그림.dcad.json' && rec.includes('받은 도면.dxf') && rec.includes('사본.dcad.json') && !rec.some((n) => /\.(png|svg|csv|pdf)$/.test(n)),
+    '최근 목록 ' + rec.length + '개: ' + rec.join(', '));
+  await page.click('.recent-list button:has(b:text-is("받은 도면.dxf"))');
+  await page.waitForFunction(() => DCAD.App.file && DCAD.App.file.name === '받은 도면.dxf');
+  check(!(await page.$('.recent-list')), '최근 목록에서 눌러 열기');
+
   // 11) 닫기: 저장 안 한 내용이 있으면 묻는다 — 취소 → 그대로, 저장 → 저장하고 닫힘
   await drawLine(page, '0,1500', '1000,1500');
   await plan(app, 'box', 2);

@@ -153,7 +153,7 @@
     var tp = Model.prims(target, doc), out = [];
     var tb = G.boxGrow(Model.bounds(target, doc), 1e-6);
     others.forEach(function (o) {
-      if (o === target || o.type === 'hatch') return;
+      if (o === target || o.type === 'hatch' || o.type === 'image') return;
       if (!G.boxHit(Model.bounds(o, doc), tb)) return;
       var op = Model.prims(o, doc);
       tp.forEach(function (a) { op.forEach(function (b) { Model.primInter(a, b).forEach(function (q) { out.push(q); }); }); });
@@ -165,7 +165,7 @@
     var seg = { k: 'L', a: a, b: b }, out = [];
     var sb = G.boxFrom(a, b);
     others.forEach(function (o) {
-      if (o === skip || o.type === 'hatch' || !G.boxHit(Model.bounds(o, doc), G.boxGrow(sb, 1e-6))) return;
+      if (o === skip || o.type === 'hatch' || o.type === 'image' || !G.boxHit(Model.bounds(o, doc), G.boxGrow(sb, 1e-6))) return;
       Model.prims(o, doc).forEach(function (pr) { Model.primInter(seg, pr).forEach(function (q) { out.push(q); }); });
     });
     return out;
@@ -267,7 +267,7 @@
       case 'arc': put(e.c, 'move'); put(G.polar(e.c, e.r, e.a0), 'a0'); put(G.polar(e.c, e.r, e.a1), 'a1'); put(G.polar(e.c, e.r, e.a0 + G.sweep(e.a0, e.a1) / 2), 'r'); break;
       case 'poly': e.pts.forEach(function (p, i) { put(p, 'v' + i); }); break;
       case 'ellipse': put(e.c, 'move'); break;
-      case 'text': case 'mtext': case 'insert': case 'point': put(e.p, 'move'); break;
+      case 'text': case 'mtext': case 'insert': case 'point': case 'image': put(e.p, 'move'); break;
       case 'dim':
         if (e.kind === 'lin') { put(e.p1, 'p1'); put(e.p2, 'p2'); put(e.loc, 'loc'); }
         else if (e.kind === 'ang') { put(e.c, 'move'); put(e.loc, 'loc'); }
@@ -698,7 +698,7 @@
         var e0 = G.polar(e.c, e.r, e.a0), e1 = G.polar(e.c, e.r, e.a1), atEnd = G.dist(hit.p, e1) < G.dist(hit.p, e0);
         var circ = { k: 'C', c: e.c, r: e.r }, gap = G.normAng(e.a0 - e.a1), bestA = null, bestD = Infinity;
         others.forEach(function (o) {
-          if (o === e || o.type === 'hatch') return;
+          if (o === e || o.type === 'hatch' || o.type === 'image') return;
           Model.prims(o, ctx.doc).forEach(function (pr) {
             Model.primInter(circ, pr).forEach(function (q) {
               var ang = G.angle(e.c, q), dd = atEnd ? G.normAng(ang - e.a1) : G.normAng(e.a0 - ang);
@@ -996,7 +996,7 @@
         break;
       }
       case 'circle': case 'ellipse': if (inb(e.c)) Model.transform(e, M.move(d.x, d.y)); break;
-      case 'text': case 'mtext': case 'insert': case 'point': if (inb(e.p)) Model.transform(e, M.move(d.x, d.y)); break;
+      case 'text': case 'mtext': case 'insert': case 'point': case 'image': if (inb(e.p)) Model.transform(e, M.move(d.x, d.y)); break;
       case 'dim': ['p1', 'p2', 'loc', 'c', 'p'].forEach(function (k) { if (e[k] && inb(e[k])) mv(e[k]); }); break;
     }
     return e;
@@ -1161,6 +1161,7 @@
   def('_PASTE', '붙여넣기', ['PASTE', '붙여넣기'], function* (ctx) {
     var clip = ctx.clipboard();
     if (!clip || !clip.ents || !clip.ents.length) { ctx.msg('복사한 것이 없습니다. 객체를 고르고 Ctrl+C 하세요.'); return; }
+    if (NS.Images) NS.Images.unpack(clip);
     Object.keys(clip.blocks || {}).forEach(function (n) { if (!ctx.doc.blocks[n]) ctx.doc.blocks[n] = Model.clone(clip.blocks[n]); });
     (clip.layers || []).forEach(function (l) { if (!Model.layerOf(ctx.doc, l.name)) ctx.doc.layers.push(Model.clone(l)); });
     Model.touch();
@@ -1168,6 +1169,38 @@
     var p = yield { type: 'point', prompt: '붙여 넣을 곳 (복사한 것의 왼쪽 아래가 여기에)', preview: function (q) { return previewOf(clip.ents, M.move(q.x - b.x, q.y - b.y)); } };
     cloneMove(clip.ents, M.move(p.x - b.x, p.y - b.y)).forEach(function (e) { e.id = 0; ctx.add(e); });
     ctx.msg(clip.ents.length + '개를 붙여 넣었습니다.');
+  });
+
+  // ---- 밑그림 이미지 ----
+  function niceLen(x) { var k = Math.pow(10, Math.floor(Math.log(x) / Math.LN10)); return Math.max(1, Math.round(x / k) * k); }
+  def('IMAGE', '밑그림 넣기', ['IM', '이미지', '밑그림'], function* (ctx) {
+    ctx.pickImage(); // 그림 파일을 고르면 _IMAGEPLACE가 이어서 시작된다
+  });
+  def('_IMAGEPLACE', '밑그림 넣기', [], function* (ctx) {
+    var im = ctx.takeImage();
+    if (!im) return;
+    var vb = ctx.viewBox(), w0 = niceLen((vb.x1 - vb.x0) * 0.6), ratio = im.ih / im.iw;
+    var make = function (p, w) {
+      return ctx.tmp('image', { p: G.v(p.x, p.y), u: G.v(w, 0), v: G.v(0, w * ratio), ref: im.ref, iw: im.iw, ih: im.ih, alpha: 0.5, plot: false, name: im.name });
+    };
+    var p = yield { type: 'point', prompt: '밑그림의 왼쪽 아래 구석', preview: function (q) { return [make(q, w0)]; } };
+    var w = yield { type: 'number', prompt: '밑그림 폭(mm) (모르면 Enter, 다음 단계에서 두 점으로 맞춥니다)', def: w0, base: p, preview: function (q) { var d = q.x - p.x; return d > 0 ? [make(p, d)] : []; } };
+    if (!(w > 0)) w = w0;
+    Model.ensureLayer(ctx.doc, '밑그림', 8, 'CONTINUOUS', 0.13);
+    var e = make(p, w);
+    e.layer = '밑그림';
+    ctx.addBehind(e);
+    ctx.msg('밑그림을 넣었습니다: ' + im.name + ' (' + im.iw + '×' + im.ih + ' 픽셀). 도면층 \'밑그림\'에 들어가고 DXF·인쇄에는 나오지 않습니다.');
+    var a = yield { type: 'point', prompt: '축척 맞추기: 밑그림에서 길이를 아는 곳의 첫 점 (건너뛰려면 Enter)', allowNone: true };
+    if (!a) return;
+    var b = yield { type: 'point', prompt: '둘째 점', base: a };
+    var L = yield { type: 'number', prompt: '두 점 사이의 실제 길이(mm)' };
+    var d = G.dist(a, b);
+    if (!(L > 0) || d < 1e-9) { ctx.msg('축척 맞추기를 건너뛰었습니다.'); return; }
+    ctx.change();
+    Model.transform(e, M.scale(L / d, L / d, a));
+    ctx.modified();
+    ctx.msg('축척을 맞췄습니다: ' + G.fmt(d, 1) + ' → ' + G.fmt(L, 1) + 'mm (×' + G.fmt(L / d, 4) + '). 밑그림 폭 ' + G.fmt(G.len(e.u), 0) + 'mm');
   });
 
   // ---- 조회 ----
