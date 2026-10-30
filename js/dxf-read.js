@@ -333,11 +333,111 @@
           e.pts = lp; e.closed = false;
           return lp.length > 1 ? [e] : [];
         }
+        case 'HATCH': {
+          var hr = parseHatch(tags);
+          if (!hr.loops.length) return [];
+          e = base(tags, 'hatch');
+          e.loops = hr.loops; e.solid = hr.solid; e.pat = hr.name; e.fams = hr.fams; e.scale = hr.scale; e.ang = hr.ang;
+          if (!e.solid && !e.fams.length && NS.Hatch.PATTERNS[hr.name]) e.fams = NS.Hatch.families(hr.name, hr.scale, hr.ang);
+          return [e];
+        }
         case 'VIEWPORT': case 'SEQEND': case 'VERTEX':
           report.count--; return [];
       }
       report.count--;
       return null;
+    }
+
+    // HATCH: 경계 경로(폴리선 또는 선·호·타원·스플라인 모서리)와 무늬 선
+    function parseHatch(tags) {
+      var i = 0, n = tags.length;
+      function take(code) { if (i < n && tags[i][0] === code) return tags[i++][1]; return undefined; }
+      function num(code, def) { var v = take(code); return v === undefined ? def : parseFloat(v); }
+      function skipTo(code) { while (i < n && tags[i][0] !== code) i++; }
+      var fl = f(tags, 230, 1) < -0.5;
+      var res = { name: decodeStr(s(tags, 2, '')).toUpperCase(), solid: f(tags, 70, 0) === 1, loops: [], fams: [], scale: 1, ang: 0 };
+      skipTo(91);
+      var np = parseInt(take(91), 10) || 0;
+      function addSeg(loop, a, b, bulge) {
+        var last = loop[loop.length - 1];
+        if (last && G.eq(last, a, 1e-6)) { if (bulge) last.bulge = bulge; else delete last.bulge; }
+        else { var v0 = { x: a.x, y: a.y }; if (bulge) v0.bulge = bulge; loop.push(v0); }
+        loop.push({ x: b.x, y: b.y });
+      }
+      function addPts(loop, pts) { for (var k = 0; k + 1 < pts.length; k++) addSeg(loop, pts[k], pts[k + 1], 0); }
+      for (var pi = 0; pi < np; pi++) {
+        skipTo(92);
+        var pf = parseInt(take(92), 10) || 0, loop = [];
+        if (pf & 2) {
+          var hasB = num(72, 0), nv = (num(73, 1), num(93, 0));
+          for (var v = 0; v < nv; v++) {
+            var pt = { x: num(10, 0), y: num(20, 0) }, b = hasB ? num(42, 0) : 0;
+            if (b) pt.bulge = b;
+            loop.push(pt);
+          }
+        } else {
+          var ne = num(93, 0);
+          for (var k = 0; k < ne; k++) {
+            var et = num(72, 1);
+            if (et === 1) {
+              addSeg(loop, G.v(num(10, 0), num(20, 0)), G.v(num(11, 0), num(21, 0)), 0);
+            } else if (et === 2) {
+              var c = G.v(num(10, 0), num(20, 0)), r = num(40, 1), sa = num(50, 0), ea = num(51, 360), ccw = num(73, 1);
+              var s0 = ccw ? sa : 360 - ea, e0 = ccw ? ea : 360 - sa;
+              var sw = Math.abs(e0 - s0) >= 360 - 1e-9 ? G.TAU : G.sweep(G.rad(s0), G.rad(e0));
+              var from = G.rad(ccw ? s0 : e0), dir = ccw ? 1 : -1;
+              if (sw >= G.TAU - 1e-9) { // 한 바퀴는 반원 둘로
+                addSeg(loop, G.polar(c, r, from), G.polar(c, r, from + dir * Math.PI), dir);
+                addSeg(loop, G.polar(c, r, from + dir * Math.PI), G.polar(c, r, from), dir);
+              } else addSeg(loop, G.polar(c, r, from), G.polar(c, r, from + dir * sw), dir * Math.tan(sw / 4));
+            } else if (et === 3) {
+              var ec = G.v(num(10, 0), num(20, 0)), maj = G.v(num(11, 1), num(21, 0)), ratio = num(40, 1);
+              var esa = num(50, 0), eea = num(51, 360), eccw = num(73, 1);
+              var a0 = G.rad(eccw ? esa : 360 - eea), a1 = G.rad(eccw ? eea : 360 - esa);
+              var t0 = Math.atan2(Math.sin(a0) / ratio, Math.cos(a0)), t1 = Math.atan2(Math.sin(a1) / ratio, Math.cos(a1));
+              var esw = Math.abs(eea - esa) >= 360 - 1e-9 ? G.TAU : G.sweep(t0, t1), mn = G.mul(G.perp(maj), ratio), seg = Math.max(8, Math.ceil(64 * esw / G.TAU)), ep = [];
+              for (var q = 0; q <= seg; q++) { var t = t0 + esw * q / seg; ep.push(G.add(ec, G.add(G.mul(maj, Math.cos(t)), G.mul(mn, Math.sin(t))))); }
+              if (!eccw) ep.reverse();
+              addPts(loop, ep);
+            } else if (et === 4) {
+              var deg = num(94, 3), rational = num(73, 0); num(74, 0);
+              var nk = num(95, 0), nc = num(96, 0), knots = [], ctrl = [], wts = [];
+              for (var kk = 0; kk < nk; kk++) knots.push(num(40, 0));
+              for (var cc = 0; cc < nc; cc++) { ctrl.push(G.v(num(10, 0), num(20, 0))); if (rational) wts.push(num(42, 1)); }
+              var nf = num(97, 0), fit = [];
+              for (var ff = 0; ff < nf; ff++) fit.push(G.v(num(11, 0), num(21, 0)));
+              take(12); take(22); take(13); take(23);
+              var sp = [];
+              if (ctrl.length >= 2 && knots.length === ctrl.length + deg + 1) {
+                var lo = knots[deg], hi = knots[ctrl.length], cnt = Math.max(16, ctrl.length * 10);
+                for (var z = 0; z <= cnt; z++) sp.push(deBoor(deg, knots, ctrl, wts, Math.min(lo + (hi - lo) * z / cnt, hi - 1e-9 * (hi - lo || 1))));
+              } else sp = fit;
+              addPts(loop, sp);
+            } else { report.warnings.push('해치 경계의 알 수 없는 모서리 종류 ' + et); }
+          }
+          if (loop.length > 2 && G.eq(loop[0], loop[loop.length - 1], 1e-6)) loop.pop();
+        }
+        var nsrc = num(97, 0);
+        for (var sq = 0; sq < nsrc; sq++) take(330);
+        if (loop.length >= 2) {
+          if (fl) loop = loop.map(function (p) { var o = { x: -p.x, y: p.y }; if (p.bulge) o.bulge = -p.bulge; return o; });
+          res.loops.push(loop);
+        }
+      }
+      while (i < n && tags[i][0] !== 78 && tags[i][0] !== 98 && tags[i][0] !== 47 && tags[i][0] < 400) {
+        if (tags[i][0] === 52) res.ang = G.rad(parseFloat(tags[i][1]));
+        if (tags[i][0] === 41) res.scale = parseFloat(tags[i][1]) || 1;
+        i++;
+      }
+      var nl = parseInt(take(78), 10) || 0;
+      for (var li = 0; li < nl; li++) {
+        var la = G.rad(num(53, 0)), bp = G.v(num(43, 0), num(44, 0)), od = G.v(num(45, 0), num(46, 0)), nd = num(79, 0), dash = [];
+        for (var di = 0; di < nd; di++) dash.push(num(49, 0));
+        if (fl) { la = Math.PI - la; bp.x = -bp.x; od.x = -od.x; }
+        res.fams.push({ a: G.normAng(la), p: bp, d: od, dash: dash });
+      }
+      if (fl) res.ang = G.normAng(Math.PI - res.ang);
+      return res;
     }
 
     // 스플라인: 맞춤점이 있으면 그대로, 없으면 조정점으로 de Boor 계산

@@ -50,7 +50,41 @@ def rich(version, name, encoding=None):
     doc.saveas(out / name)
 
 
+def hatches(name):
+    doc = ezdxf.new('R2018', setup=True)
+    doc.layers.add('해치', color=3)
+    msp = doc.modelspace()
+    # 1) 폴리선 경계(볼록 구간) + ANSI31 축척 2, 30도
+    h = msp.add_hatch(color=1, dxfattribs={'layer': '해치'})
+    h.paths.add_polyline_path([(0, 0, 0), (100, 0, 0.5), (100, 60, 0), (0, 60, 0)], is_closed=True)
+    h.set_pattern_fill('ANSI31', scale=2, angle=30)
+    # 2) 모서리 경계를 시계 방향으로 한 바퀴: 선 + 시계 호 + 선 + 시계 호, 단색 (넓이 6000 + π·30²)
+    h = msp.add_hatch(color=2)
+    ep = h.paths.add_edge_path()
+    ep.add_line((200, 60), (300, 60))
+    ep.add_arc((300, 30), 30, -90, 90, ccw=False)
+    ep.add_line((300, 0), (200, 0))
+    ep.add_arc((200, 30), 30, 90, 270, ccw=False)
+    # 3) 단색, 구멍 하나 (바깥 사각형 + 안쪽 원)
+    h = msp.add_hatch(color=4)
+    h.paths.add_polyline_path([(400, 0), (500, 0), (500, 100), (400, 100)], is_closed=True)
+    e2 = h.paths.add_edge_path()
+    e2.add_arc((450, 50), 20, 0, 360)
+    # 4) 타원 모서리 + 스플라인 모서리
+    h = msp.add_hatch(color=5)
+    e3 = h.paths.add_edge_path()
+    e3.add_ellipse((650, 50), major_axis=(50, 0), ratio=0.5, start_angle=0, end_angle=180, ccw=True)
+    e3.add_spline(control_points=[(600, 50), (620, 0), (680, 0), (700, 50)], knot_values=[0, 0, 0, 0, 1, 1, 1, 1], degree=3)
+    h.set_pattern_fill('ANSI37', scale=1)
+    # 5) -Z 방향(대칭) 해치: OCS (100..150) → WCS (-150..-100)
+    h = msp.add_hatch(color=6, dxfattribs={'extrusion': (0, 0, -1)})
+    h.paths.add_polyline_path([(100, 0), (150, 0), (150, 40), (100, 40)], is_closed=True)
+    h.set_pattern_fill('ANSI31', scale=1)
+    doc.saveas(out / name)
+
+
 rich('R2018', 'rich-r2018-utf8.dxf')
+hatches('hatch-r2018.dxf')
 rich('R2000', 'rich-r2000-cp949.dxf', encoding='cp949')
 rich('R12', 'rich-r12-cp949.dxf', encoding='cp949')
 print('ok', sorted(p.name for p in out.glob('*.dxf')))

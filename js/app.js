@@ -102,6 +102,13 @@
       markChanged();
       return e;
     },
+    addBehind: function (e) { // 해치처럼 다른 객체 뒤에 그릴 것
+      ctx.change();
+      if (!e.id || index.has(e.id)) e.id = App.doc.nextId++;
+      App.doc.ents.unshift(e); index.set(e.id, e);
+      markChanged();
+      return e;
+    },
     remove: function (list) {
       ctx.change();
       var kill = new Set(list.map(function (e) { return e.id; }));
@@ -167,7 +174,7 @@
       App.preview = null;
       $$('#tools button[data-cmd]').forEach(function (b) { b.classList.remove('active'); });
       showPrompt();
-      if (cur && cur.changed) { refreshPanels(); }
+      if (cur && cur.changed) { refreshPanels(); if (tabNow === 'lib') renderLib(); }
       refreshProps();
       redraw();
     },
@@ -297,7 +304,7 @@
       var ents = App.doc.ents;
       for (var i = ents.length - 1; i >= 0 && near.length < 150; i--) {
         var e = ents[i], l = Model.layerOf(App.doc, e.layer);
-        if (l && !l.visible) continue;
+        if ((l && !l.visible) || e.type === 'hatch') continue;
         var b = Model.bounds(e, App.doc);
         if (G.boxValid(b) && G.boxHit(b, area)) near.push(e);
       }
@@ -704,7 +711,7 @@
       pane.appendChild(hint);
       return;
     }
-    var TYPE = { line: '선', circle: '원', arc: '호', poly: '폴리선', ellipse: '타원', text: '문자', mtext: '여러 줄 문자', dim: '치수', insert: '블록(기호)', point: '점' };
+    var TYPE = { line: '선', circle: '원', arc: '호', poly: '폴리선', ellipse: '타원', text: '문자', mtext: '여러 줄 문자', dim: '치수', insert: '블록(기호)', point: '점', hatch: '해치' };
     h.textContent = list.length === 1 ? TYPE[list[0].type] || list[0].type : list.length + '개 선택';
     pane.appendChild(h);
     var layerOpts = doc.layers.map(function (l) { return [l.name, l.name]; });
@@ -771,6 +778,23 @@
         field(pane, '배율 X', f(e.sx === undefined ? 1 : e.sx), function (v) { if (v) edit(function () { e.sx = v; }); });
         field(pane, '배율 Y', f(e.sy === undefined ? 1 : e.sy), function (v) { if (v) edit(function () { e.sy = v; }); });
         break;
+      case 'hatch': {
+        var PAT = NS.Hatch.PATTERNS, k0 = doc.settings.scale || 1;
+        var regen = function () { e.solid = !!PAT[e.pat].solid; e.fams = NS.Hatch.families(e.pat, e.scale, e.ang || 0); };
+        if (PAT[e.pat]) {
+          field(pane, '무늬', e.pat, function (v) { edit(function () { e.pat = v; regen(); }); }, { options: Object.keys(PAT).map(function (k) { return [k, PAT[k].label]; }) });
+          if (!e.solid) {
+            field(pane, '무늬 축척', G.fmt(e.scale / k0, 4), function (v) { if (v > 0) edit(function () { e.scale = v * k0; regen(); }); });
+            field(pane, '무늬 각도', G.fmt(G.deg(e.ang || 0), 2), function (v) { edit(function () { e.ang = G.rad(v); regen(); }); });
+          }
+        } else field(pane, '무늬', (e.pat || '(이름 없음)') + ' (받은 도면)', null, { readonly: true });
+        var ha = 0;
+        e.loops.forEach(function (l, i) { var a = Math.abs(Cmd.polyAreaBulge(l, true)); ha += i === 0 ? a : -a; });
+        field(pane, '경계', e.loops.length + '개' + (e.loops.length > 1 ? ' (안쪽 섬 포함)' : ''), null, { readonly: true });
+        field(pane, '넓이(대략)', G.fmt(Math.abs(ha) / 1e6, 3) + ' m² (' + G.fmt(Math.abs(ha) / 1e6 / 3.305785, 2) + '평)', null, { readonly: true });
+        if (Model.prims(e, doc).dense) { var hd = document.createElement('p'); hd.className = 'hint'; hd.textContent = '무늬가 너무 촘촘해 경계만 보입니다. 무늬 축척을 키워 주세요.'; pane.appendChild(hd); }
+        break;
+      }
       case 'dim': {
         var dg = Model.dimGeom(e, doc);
         field(pane, '측정값', f(dg.value), null, { readonly: true });
@@ -965,9 +989,9 @@
     var body = $('#help-body');
     if (!body.childNodes.length) {
       var groups = [
-        ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'INSERT', 'SHEET']],
+        ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'HATCH', 'INSERT', 'BLOCK', 'SHEET']],
         ['치수', ['DIMLIN', 'DIMALI', 'DIMRAD', 'DIMDIA', 'DIMANG', 'EDITTEXT']],
-        ['수정', ['MOVE', 'COPY', 'ROTATE', 'MIRROR', 'SCALE', 'OFFSET', 'TRIM', 'EXTEND', 'FILLET', 'CHAMFER', 'ARRAY', 'ARRAYPOLAR', 'JOIN', 'EXPLODE', 'ERASE']],
+        ['수정', ['MOVE', 'COPY', 'ROTATE', 'MIRROR', 'SCALE', 'STRETCH', 'OFFSET', 'TRIM', 'EXTEND', 'BREAK', 'FILLET', 'CHAMFER', 'ARRAY', 'ARRAYPOLAR', 'JOIN', 'EXPLODE', 'ERASE']],
         ['재기·보기', ['DIST', 'AREA', 'ZOOMEXT']]
       ];
       var html = '<div class="help-cols">';

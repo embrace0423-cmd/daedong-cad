@@ -68,6 +68,13 @@
         case 'arc': return '<path d="' + arcPath(e.c, e.r, e.a0, e.a1) + '"' + st + '/>';
         case 'poly': return '<path d="' + polyPath(e.pts, e.closed) + '"' + st + (e.fill ? ' fill="' + col + '"' : '') + '/>';
         case 'ellipse': { var ep = Model.ellipsePoints(e, 96); return '<path d="' + polyPath(ep.pts, ep.full) + '"' + st + '/>'; }
+        case 'hatch': {
+          var hpr = Model.prims(e, doc);
+          if (e.solid) return '<path d="' + hpr.filter(function (q) { return q.hb; }).map(function (q) { return polyPath(q.pts, true); }).join('') + '" fill="' + col + '" fill-rule="evenodd" stroke="none"/>';
+          var segs = hpr.filter(function (q) { return q.hp; });
+          if (!segs.length) return '';
+          return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '"' + (unit !== 1 ? ' stroke-width="' + n(sw / unit) + '"' : '') + '/>';
+        }
         case 'point': return '<circle cx="' + n(e.p.x) + '" cy="' + n(e.p.y) + '" r="' + n(sw) + '" fill="' + col + '" stroke="none"/>';
         case 'text': return text(e.p, e.h, e.rot, e.s, e.align, e.valign, col);
         case 'mtext': return (Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).map(function (t) { return text(t.p, t.h, t.rot, t.s, t.align, t.valign, col); }).join('');

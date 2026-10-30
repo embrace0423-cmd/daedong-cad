@@ -65,23 +65,48 @@
     pts.forEach(function (p) { if (!out.length || !G.eq(out[out.length - 1], p, 1e-7)) out.push({ x: p.x, y: p.y }); });
     return out;
   }
-  // d>0이면 진행 방향 왼쪽. 꺾이는 곳은 두 선의 교점(마이터)
+  // 구간 i의 시작·끝 접선 방향과 (호면) 원 정보
+  function segInfo(pts, i, closed) {
+    var n = pts.length, a = pts[i], b = pts[(i + 1) % n], bl = a.bulge || 0;
+    if (bl) {
+      var arc = G.bulgeArc(a, b, bl);
+      if (arc) {
+        var sgn = bl > 0 ? 1 : -1;
+        return { t0: G.mul(G.norm(G.perp(G.sub(a, arc.c))), sgn), t1: G.mul(G.norm(G.perp(G.sub(b, arc.c))), sgn), arc: arc, ccw: bl > 0 };
+      }
+    }
+    var t = G.norm(G.sub(b, a));
+    return { t0: t, t1: t };
+  }
+  // 폴리선 평행 이동 (d>0이면 진행 방향 왼쪽). 호 구간은 같은 중심으로 반지름만 바뀌고 볼록값은 그대로.
+  // 꺾이는 곳은 두 접선의 교점(마이터). 호가 뒤집힐 만큼 안쪽이면 null.
   function offsetPts(pts, d, closed) {
-    pts = cleanPts(pts);
-    if (closed && pts.length > 2 && G.eq(pts[0], pts[pts.length - 1], 1e-7)) pts.pop();
-    var n = pts.length, segs = [];
-    if (n < 2) return pts;
-    for (var i = 0; i < (closed ? n : n - 1); i++) {
-      var a = pts[i], b = pts[(i + 1) % n], nr = G.perp(G.norm(G.sub(b, a)));
-      segs.push([G.add(a, G.mul(nr, d)), G.add(b, G.mul(nr, d))]);
+    var src = [];
+    pts.forEach(function (p) { if (!src.length || !G.eq(src[src.length - 1], p, 1e-7)) { var o = { x: p.x, y: p.y }; if (p.bulge) o.bulge = p.bulge; src.push(o); } else if (p.bulge) src[src.length - 1].bulge = p.bulge; });
+    if (closed && src.length > 2 && G.eq(src[0], src[src.length - 1], 1e-7)) src.pop();
+    var n = src.length;
+    if (n < 2) return src;
+    if (!closed) delete src[n - 1].bulge;
+    var m = closed ? n : n - 1, info = [];
+    for (var i = 0; i < m; i++) {
+      var si = segInfo(src, i, closed);
+      if (si.arc && si.arc.r - d * (si.ccw ? 1 : -1) <= 1e-9) return null;
+      info.push(si);
     }
-    var m = segs.length, out = [];
-    if (!closed) out.push(segs[0][0]);
-    for (var j = closed ? 0 : 1; j < m; j++) {
-      var s1 = segs[(j - 1 + m) % m], s2 = segs[j], x = G.lineLine(s1[0], s1[1], s2[0], s2[1]);
-      if (x && G.dist(x.pt, s2[0]) < Math.abs(d) * 20) out.push(x.pt); else out.push(s2[0]);
+    var out = [];
+    for (var j = 0; j < n; j++) {
+      var v = src[j], tin = (closed || j > 0) ? info[(j - 1 + m) % m].t1 : null, tout = (closed || j < n - 1) ? info[j % m].t0 : null, q;
+      if (!tin) q = G.add(v, G.mul(G.perp(tout), d));
+      else if (!tout || Math.abs(G.cross(tin, tout)) < 1e-9) q = G.add(v, G.mul(G.perp(tin), d));
+      else {
+        var p1 = G.add(v, G.mul(G.perp(tin), d)), p2 = G.add(v, G.mul(G.perp(tout), d));
+        var x = G.lineLine(p1, G.add(p1, tin), p2, G.add(p2, tout));
+        q = x && G.dist(x.pt, v) < Math.abs(d) * 20 ? x.pt : p2;
+      }
+      var o = { x: q.x, y: q.y };
+      if (v.bulge && (closed || j < n - 1)) o.bulge = v.bulge;
+      out.push(o);
     }
-    if (!closed) out.push(segs[m - 1][1]);
     return out;
   }
 
@@ -128,7 +153,7 @@
     var tp = Model.prims(target, doc), out = [];
     var tb = G.boxGrow(Model.bounds(target, doc), 1e-6);
     others.forEach(function (o) {
-      if (o === target) return;
+      if (o === target || o.type === 'hatch') return;
       if (!G.boxHit(Model.bounds(o, doc), tb)) return;
       var op = Model.prims(o, doc);
       tp.forEach(function (a) { op.forEach(function (b) { Model.primInter(a, b).forEach(function (q) { out.push(q); }); }); });
@@ -140,7 +165,7 @@
     var seg = { k: 'L', a: a, b: b }, out = [];
     var sb = G.boxFrom(a, b);
     others.forEach(function (o) {
-      if (o === skip || !G.boxHit(Model.bounds(o, doc), G.boxGrow(sb, 1e-6))) return;
+      if (o === skip || o.type === 'hatch' || !G.boxHit(Model.bounds(o, doc), G.boxGrow(sb, 1e-6))) return;
       Model.prims(o, doc).forEach(function (pr) { Model.primInter(seg, pr).forEach(function (q) { out.push(q); }); });
     });
     return out;
@@ -636,17 +661,20 @@
           var out = G.dist(p, e.c) > e.r; c.r = out ? e.r + d : e.r - d;
           return c.r > 1e-9 ? c : null;
         }
-        if (e.pts.some(function (q) { return q.bulge; })) return null;
         var segs = Model.polySegs(e.pts, e.closed), bi = 0, bd = Infinity;
         segs.forEach(function (sg, i) { var dd = Model.primDist(sg, p); if (dd < bd) { bd = dd; bi = i; } });
-        var sg = segs[bi], sd = G.cross(G.sub(sg.b, sg.a), G.sub(p, sg.a)) >= 0 ? 1 : -1;
-        c.pts = offsetPts(e.pts, d * sd, e.closed);
+        var sg = segs[bi], sd;
+        if (sg.k === 'L') sd = G.cross(G.sub(sg.b, sg.a), G.sub(p, sg.a)) >= 0 ? 1 : -1;
+        else { var ccwArc = G.eq(G.polar(sg.c, sg.r, sg.a0), sg.from, 1e-6), inside = G.dist(p, sg.c) < sg.r; sd = (inside === ccwArc) ? 1 : -1; }
+        var op = offsetPts(e.pts, d * sd, e.closed);
+        if (!op) return null;
+        c.pts = op;
         return c;
       };
-      if (e.type === 'poly' && e.pts.some(function (q) { return q.bulge; })) { ctx.msg('호 구간이 있는 폴리선은 분해(X) 뒤 간격띄우기 하세요.'); continue; }
       var side = yield { type: 'point', prompt: '띄울 쪽 클릭', preview: function (p) { var c = mkSide(p); return c ? [c] : []; } };
       var made = mkSide(side);
       if (made) { made.id = ctx.doc.nextId++; ctx.add(made); }
+      else ctx.msg('그쪽으로는 간격을 띄울 수 없습니다 (호가 뒤집힐 만큼 안쪽).');
     }
   });
   def('TRIM', '자르기', ['TR', '자르기'], function* (ctx) {
@@ -663,12 +691,31 @@
   });
   def('EXTEND', '연장', ['EX', '연장'], function* (ctx) {
     while (true) {
-      var hit = yield { type: 'entity', prompt: '늘릴 선의 끝 쪽 클릭 (끝나면 Enter)', allowNone: true, filter: function (e) { return e.type === 'line'; } };
+      var hit = yield { type: 'entity', prompt: '늘릴 선·호의 끝 쪽 클릭 (끝나면 Enter)', allowNone: true, filter: function (e) { return e.type === 'line' || e.type === 'arc'; } };
       if (!hit) break;
-      var e = hit.e, atB = G.dist(hit.p, e.b) < G.dist(hit.p, e.a);
+      var e = hit.e, others = ctx.visibleEnts();
+      if (e.type === 'arc') {
+        var e0 = G.polar(e.c, e.r, e.a0), e1 = G.polar(e.c, e.r, e.a1), atEnd = G.dist(hit.p, e1) < G.dist(hit.p, e0);
+        var circ = { k: 'C', c: e.c, r: e.r }, gap = G.normAng(e.a0 - e.a1), bestA = null, bestD = Infinity;
+        others.forEach(function (o) {
+          if (o === e || o.type === 'hatch') return;
+          Model.prims(o, ctx.doc).forEach(function (pr) {
+            Model.primInter(circ, pr).forEach(function (q) {
+              var ang = G.angle(e.c, q), dd = atEnd ? G.normAng(ang - e.a1) : G.normAng(e.a0 - ang);
+              if (dd > 1e-7 && dd < gap - 1e-7 && dd < bestD) { bestD = dd; bestA = ang; }
+            });
+          });
+        });
+        if (bestA === null) { ctx.msg('늘릴 곳에 만나는 객체가 없습니다.'); continue; }
+        ctx.change();
+        if (atEnd) e.a1 = bestA; else e.a0 = bestA;
+        ctx.modified();
+        continue;
+      }
+      var atB = G.dist(hit.p, e.b) < G.dist(hit.p, e.a);
       var from = atB ? e.b : e.a, dir = G.norm(atB ? G.sub(e.b, e.a) : G.sub(e.a, e.b));
       var ext = Model.extents(ctx.doc), far = Math.max(1, (ext.x1 - ext.x0) + (ext.y1 - ext.y0)) * 2;
-      var hits = rayHits(G.add(from, G.mul(dir, 1e-7)), G.add(from, G.mul(dir, far)), ctx.visibleEnts(), ctx.doc, e);
+      var hits = rayHits(G.add(from, G.mul(dir, 1e-7)), G.add(from, G.mul(dir, far)), others, ctx.doc, e);
       var best = null, bd = Infinity;
       hits.forEach(function (q) { var d = G.dist(from, q); if (d > 1e-6 && d < bd) { bd = d; best = q; } });
       if (!best) { ctx.msg('늘릴 곳에 만나는 객체가 없습니다.'); continue; }
@@ -807,6 +854,234 @@
     ctx.msg(used.length + '개를 폴리선 하나로 이었습니다' + (closed ? ' (닫힘).' : '.') + (pool.length ? ' 이어지지 않은 ' + pool.length + '개는 그대로 둡니다.' : ''));
   });
 
+  // ---- 해치 ----
+  function patternList() {
+    return Object.keys(NS.Hatch.PATTERNS).map(function (k, i) { return (i + 1) + ' ' + NS.Hatch.PATTERNS[k].label; }).join(' · ');
+  }
+  function patternFrom(t) {
+    var keys = Object.keys(NS.Hatch.PATTERNS), v = String(t || '').trim();
+    var n = parseInt(v, 10);
+    if (String(n) === v && n >= 1 && n <= keys.length) return keys[n - 1];
+    var up = v.toUpperCase();
+    for (var i = 0; i < keys.length; i++) if (keys[i] === up || NS.Hatch.PATTERNS[keys[i]].label.indexOf(v) === 0) return keys[i];
+    return null;
+  }
+  // 점을 둘러싼 가장 작은 닫힌 개체 + 그 안의 닫힌 개체(섬)
+  function findBoundary(ctx, p) {
+    var cands = [];
+    ctx.visibleEnts().forEach(function (e) {
+      if (!(e.type === 'poly' && e.closed) && e.type !== 'circle' && e.type !== 'ellipse') return;
+      var loop = NS.Hatch.loopOf(e);
+      if (!loop) return;
+      cands.push({ e: e, loop: loop, box: Model.bounds(e, ctx.doc) });
+    });
+    function poly(c) { if (!c.poly) { var b = c.box; c.poly = NS.Hatch.loopPoints(c.loop, Math.hypot(b.x1 - b.x0, b.y1 - b.y0) / 2000); c.area = Math.abs(G.polyArea(c.poly)); } return c.poly; }
+    var outer = null;
+    cands.forEach(function (c) {
+      if (!G.boxHas(c.box, p) || !G.pointInPoly(p, poly(c))) return;
+      if (!outer || c.area < outer.area) outer = c;
+    });
+    if (!outer) return null;
+    var islands = [];
+    cands.forEach(function (c) {
+      if (c === outer || !G.boxInside(c.box, G.boxGrow(outer.box, 1e-6))) return;
+      var pl = poly(c);
+      if (c.area >= outer.area || G.pointInPoly(p, pl) || !G.pointInPoly(pl[0], poly(outer))) return;
+      islands.push(c);
+    });
+    // 바로 안쪽 섬만 (섬 안의 섬, 예: 방 안 가구는 채우지 않음)
+    islands = islands.filter(function (c) {
+      return !islands.some(function (o) { return o !== c && o.area > c.area && G.boxInside(c.box, G.boxGrow(o.box, 1e-6)) && G.pointInPoly(poly(c)[0], poly(o)); });
+    });
+    return [outer.loop].concat(islands.map(function (c) { return c.loop; }));
+  }
+  def('HATCH', '해치', ['H', 'BH', '해치'], function* (ctx) {
+    var st = ctx.state;
+    if (!st.hatchPat) { st.hatchPat = 'LINE45'; st.hatchScale = 1; st.hatchAng = 0; }
+    var desc = function () { return NS.Hatch.PATTERNS[st.hatchPat].label + ', 축척 ' + G.fmt(st.hatchScale, 3) + ', 각도 ' + G.fmt(st.hatchAng, 1) + '°'; };
+    ctx.msg('무늬: ' + patternList());
+    while (true) {
+      var p = yield { type: 'point', prompt: '채울 곳 안쪽 클릭 (' + desc() + ')', kw: { P: '무늬', S: '축척', A: '각도', B: '경계 고르기' }, allowNone: true };
+      if (!p) break;
+      if (p.kw === 'P') {
+        var t = yield { type: 'text', prompt: '무늬 번호나 이름 (' + patternList() + ')', def: st.hatchPat };
+        var pk = patternFrom(t);
+        if (pk) st.hatchPat = pk; else ctx.msg('그런 무늬가 없습니다.');
+        continue;
+      }
+      if (p.kw === 'S') { var v = yield { type: 'number', prompt: '무늬 축척 (도면 축척에 곱함, 2면 두 배 성기게)', def: st.hatchScale }; if (v > 0) st.hatchScale = v; continue; }
+      if (p.kw === 'A') { var a = yield { type: 'angle', prompt: '무늬 각도', def: st.hatchAng }; st.hatchAng = a || 0; continue; }
+      var loops;
+      if (p.kw === 'B') {
+        var sel = yield { type: 'select', prompt: '경계로 쓸 닫힌 폴리선·원·타원 선택 (끝나면 Enter)' };
+        loops = (sel || []).map(NS.Hatch.loopOf).filter(Boolean);
+        if (!loops.length) { ctx.msg('닫힌 폴리선·원·타원을 골라 주세요.'); continue; }
+      } else {
+        loops = findBoundary(ctx, p);
+        if (!loops) { ctx.msg('그 점을 둘러싼 닫힌 경계(닫힌 폴리선·원·타원)가 없습니다. 선으로 그린 테두리는 결합(J)으로 닫힌 폴리선을 만든 뒤 해 보세요.'); continue; }
+      }
+      var k = (ctx.doc.settings.scale || 1) * st.hatchScale, ang = G.rad(st.hatchAng), P = NS.Hatch.PATTERNS[st.hatchPat];
+      var e = ctx.tmp('hatch', { loops: loops, solid: !!P.solid, pat: st.hatchPat, scale: k, ang: ang, fams: NS.Hatch.families(st.hatchPat, k, ang) });
+      if (!e.solid && NS.Hatch.segments(e).dense) { ctx.msg('무늬가 너무 촘촘합니다. 축척(S)을 키워 주세요.'); continue; }
+      ctx.addBehind(e);
+      ctx.msg('해치를 넣었습니다 (경계 ' + loops.length + '개' + (loops.length > 1 ? ', 안쪽 섬 ' + (loops.length - 1) + '개' : '') + ').');
+    }
+  });
+
+  // ---- 블록 만들기 ----
+  def('BLOCK', '블록 만들기', ['B', '블록'], function* (ctx) {
+    var s = yield* selectEnts(ctx, '블록으로 묶을 객체 선택 (끝나면 Enter)');
+    if (!s.length) return;
+    var base = yield { type: 'point', prompt: '기준점 (넣을 때 마우스로 잡는 점)' };
+    var n = 1;
+    while (ctx.doc.blocks['블록' + n]) n++;
+    var name;
+    while (true) {
+      name = yield { type: 'text', prompt: '블록 이름', def: '블록' + n };
+      name = String(name || '').trim();
+      if (!name) return;
+      if (ctx.doc.blocks[name] || NS.Library.symbolByName(name)) { ctx.msg('같은 이름의 블록이 있습니다. 다른 이름을 써 주세요.'); continue; }
+      break;
+    }
+    ctx.change();
+    ctx.doc.blocks[name] = { name: name, base: { x: base.x, y: base.y }, ents: s.map(function (e) { var c = Model.clone(e); c.id = ctx.doc.nextId++; return c; }) };
+    Model.touch();
+    ctx.remove(s);
+    ctx.add(ctx.tmp('insert', { name: name, p: base, sx: 1, sy: 1, rot: 0 }));
+    ctx.msg('블록 "' + name + '"을 만들었습니다 (객체 ' + s.length + '개). 오른쪽 [기호] → "이 도면의 블록"에서 다시 넣을 수 있습니다.');
+  });
+
+  // ---- 늘리기 ----
+  function stretchEnt(e, bx, d) {
+    var inb = function (p) { return G.boxHas(bx, p); };
+    var mv = function (p) { p.x += d.x; p.y += d.y; };
+    switch (e.type) {
+      case 'line': if (inb(e.a)) mv(e.a); if (inb(e.b)) mv(e.b); break;
+      case 'poly': e.pts.forEach(function (p) { if (inb(p)) mv(p); }); break;
+      case 'hatch': e.loops.forEach(function (l) { l.forEach(function (p) { if (inb(p)) mv(p); }); }); break;
+      case 'arc': {
+        var p0 = G.polar(e.c, e.r, e.a0), p1 = G.polar(e.c, e.r, e.a1), pm = G.polar(e.c, e.r, e.a0 + G.sweep(e.a0, e.a1) / 2);
+        var i0 = inb(p0), i1 = inb(p1), im = inb(pm);
+        if (i0 && i1) { Model.transform(e, M.move(d.x, d.y)); break; }
+        if (!i0 && !i1) break;
+        if (i0) mv(p0); if (i1) mv(p1); if (im) mv(pm);
+        var a3 = G.arc3(p0, pm, p1);
+        if (a3) { e.c = a3.c; e.r = a3.r; e.a0 = a3.a0; e.a1 = a3.a1; }
+        break;
+      }
+      case 'circle': case 'ellipse': if (inb(e.c)) Model.transform(e, M.move(d.x, d.y)); break;
+      case 'text': case 'mtext': case 'insert': case 'point': if (inb(e.p)) Model.transform(e, M.move(d.x, d.y)); break;
+      case 'dim': ['p1', 'p2', 'loc', 'c', 'p'].forEach(function (k) { if (e[k] && inb(e[k])) mv(e[k]); }); break;
+    }
+    return e;
+  }
+  def('STRETCH', '늘리기', ['S', '늘리기'], function* (ctx) {
+    var rect = function (a, b) { return ctx.tmp('poly', { pts: [G.v(a.x, a.y), G.v(b.x, a.y), G.v(b.x, b.y), G.v(a.x, b.y)], closed: true }); };
+    var a = yield { type: 'point', prompt: '늘릴 끝을 감싸는 창의 첫 구석 (안에 든 점만 움직입니다)' };
+    var b = yield { type: 'point', prompt: '반대 구석', base: a, noOrtho: true, preview: function (p) { return [rect(a, p)]; } };
+    var bx = G.boxFrom(a, b);
+    var targets = ctx.visibleEnts().filter(function (e) { var l = Model.layerOf(ctx.doc, e.layer); return !(l && l.locked) && Model.hitsBox(e, ctx.doc, bx); });
+    if (!targets.length) { ctx.msg('창에 걸친 객체가 없습니다.'); return; }
+    ctx.msg(targets.length + '개가 창에 걸렸습니다.');
+    var base = yield { type: 'point', prompt: '기준점' };
+    var to = yield { type: 'point', prompt: '옮길 곳 (예: @500,0)', base: base, preview: function (p) { var d = G.sub(p, base); return targets.map(function (e) { return stretchEnt(Model.clone(e), bx, d); }); } };
+    var dd = G.sub(to, base);
+    ctx.change();
+    targets.forEach(function (e) { stretchEnt(e, bx, dd); });
+    ctx.modified();
+  });
+
+  // ---- 끊기 ----
+  // 폴리선 위치 {seg, u} (u는 구간 안 0~1)
+  function polyPos(e, q) {
+    var segs = Model.polySegs(e.pts, e.closed), best = { seg: 0, u: 0 }, bd = Infinity, n = e.pts.length;
+    segs.forEach(function (sg, i) {
+      var a = e.pts[i], b = e.pts[(i + 1) % n], bl = a.bulge || 0, u, pt;
+      if (bl) {
+        var arc = G.bulgeArc(a, b, bl), ang = G.normAng((G.angle(arc.c, q) - arc.a0) * (arc.th > 0 ? 1 : -1));
+        u = Math.min(1, ang / Math.abs(arc.th));
+        if (ang > Math.abs(arc.th)) u = (G.normAng(ang) - Math.abs(arc.th)) < (G.TAU - G.normAng(ang)) ? 1 : 0;
+        pt = G.rotate(a, arc.c, arc.th * u);
+      } else { var r = G.segClosest(q, a, b); u = r.t; pt = r.pt; }
+      var dd = G.dist(q, pt);
+      if (dd < bd) { bd = dd; best = { seg: i, u: u }; }
+    });
+    return best;
+  }
+  function polyPoint(pts, pos) {
+    var n = pts.length, a = pts[pos.seg], b = pts[(pos.seg + 1) % n];
+    if (a.bulge) { var arc = G.bulgeArc(a, b, a.bulge); return G.rotate(a, arc.c, arc.th * pos.u); }
+    return G.lerp(a, b, pos.u);
+  }
+  function subBulge(pts, seg, u0, u1) { var b = pts[seg].bulge; return b ? Math.tan(4 * Math.atan(b) * (u1 - u0) / 4) : 0; }
+  // A에서 B까지 앞으로 가며 자른 점열 (닫힌 폴리선은 한 바퀴 돌 수 있음)
+  function polySlice(pts, closed, A, B) {
+    var n = pts.length, out = [];
+    function V(p, b) { var o = { x: p.x, y: p.y }; if (b) o.bulge = b; return o; }
+    var seg = A.seg, u = A.u, guard = 0;
+    while (guard++ <= n + 1) {
+      var endHere = seg === B.seg && (B.u >= u - 1e-12) && !(guard === 1 && closed && B.seg === A.seg && B.u <= A.u);
+      if (endHere) { out.push(V(polyPoint(pts, { seg: seg, u: u }), subBulge(pts, seg, u, B.u))); out.push(V(polyPoint(pts, B), 0)); break; }
+      out.push(V(polyPoint(pts, { seg: seg, u: u }), subBulge(pts, seg, u, 1)));
+      seg = seg + 1; u = 0;
+      if (seg >= (closed ? n : n - 1)) { if (!closed) { out.push(V(pts[n - 1], 0)); break; } seg = 0; }
+    }
+    var clean = [];
+    out.forEach(function (p) { if (!clean.length || !G.eq(clean[clean.length - 1], p, 1e-9)) clean.push(p); else if (p.bulge) clean[clean.length - 1].bulge = p.bulge; });
+    if (clean.length) delete clean[clean.length - 1].bulge;
+    return clean;
+  }
+  function breakEntity(e, q1, q2, doc) {
+    var mkLike = function (type, props) { var x = Model.mk(doc, type, props); x.layer = e.layer; x.color = e.color; x.ltype = e.ltype; return x; };
+    var same = G.dist(q1, q2) < 1e-9;
+    if (e.type === 'line') {
+      var t1 = Math.max(0, Math.min(1, G.projectLine(q1, e.a, e.b).t)), t2 = Math.max(0, Math.min(1, G.projectLine(q2, e.a, e.b).t));
+      var lo = Math.min(t1, t2), hi = Math.max(t1, t2), out = [];
+      if (lo > 1e-9) out.push(mkLike('line', { a: G.v(e.a.x, e.a.y), b: G.lerp(e.a, e.b, lo) }));
+      if (hi < 1 - 1e-9) out.push(mkLike('line', { a: G.lerp(e.a, e.b, hi), b: G.v(e.b.x, e.b.y) }));
+      return out;
+    }
+    if (e.type === 'arc') {
+      var sw = G.sweep(e.a0, e.a1), u1 = Math.min(sw, G.normAng(G.angle(e.c, q1) - e.a0)), u2 = Math.min(sw, G.normAng(G.angle(e.c, q2) - e.a0));
+      var l = Math.min(u1, u2), h = Math.max(u1, u2), res = [];
+      if (l > 1e-9) res.push(mkLike('arc', { c: G.v(e.c.x, e.c.y), r: e.r, a0: e.a0, a1: G.normAng(e.a0 + l) }));
+      if (h < sw - 1e-9) res.push(mkLike('arc', { c: G.v(e.c.x, e.c.y), r: e.r, a0: G.normAng(e.a0 + h), a1: e.a1 }));
+      return res;
+    }
+    if (e.type === 'circle') {
+      if (same) return null;
+      return [mkLike('arc', { c: G.v(e.c.x, e.c.y), r: e.r, a0: G.angle(e.c, q2), a1: G.angle(e.c, q1) })];
+    }
+    if (e.type === 'poly') {
+      var A = polyPos(e, q1), B = polyPos(e, q2);
+      if (e.closed) {
+        if (same) return [mkLike('poly', { pts: polySlice(e.pts, true, A, A), closed: false })];
+        return [mkLike('poly', { pts: polySlice(e.pts, true, B, A), closed: false })];
+      }
+      var first = A.seg < B.seg || (A.seg === B.seg && A.u <= B.u) ? A : B, second = first === A ? B : A;
+      var res2 = [], startPos = { seg: 0, u: 0 }, endPos = { seg: e.pts.length - 2, u: 1 };
+      var p1s = polySlice(e.pts, false, startPos, first), p2s = polySlice(e.pts, false, second, endPos);
+      if (p1s.length >= 2) res2.push(mkLike('poly', { pts: p1s, closed: false }));
+      if (p2s.length >= 2) res2.push(mkLike('poly', { pts: p2s, closed: false }));
+      return res2;
+    }
+    return null;
+  }
+  def('BREAK', '끊기', ['BR', '끊기'], function* (ctx) {
+    var hit = yield { type: 'entity', prompt: '끊을 객체 (클릭한 곳이 첫째 끊는 점)', filter: function (e) { return /^(line|arc|circle|poly)$/.test(e.type); } };
+    var q1 = null, bd = Infinity;
+    Model.prims(hit.e, ctx.doc).forEach(function (pr) { var q = Model.primNearest(pr, hit.p); if (q && G.dist(q, hit.p) < bd) { bd = G.dist(q, hit.p); q1 = q; } });
+    var q2 = yield { type: 'point', prompt: '둘째 끊는 점 (그 자리에서 둘로 나누려면 @ 입력)', base: q1, kw: { F: '첫 점 다시' } };
+    if (q2.kw === 'F') {
+      q1 = yield { type: 'point', prompt: '첫째 끊는 점' };
+      q2 = yield { type: 'point', prompt: '둘째 끊는 점 (그 자리에서 둘로 나누려면 @ 입력)', base: q1 };
+    }
+    var res = breakEntity(hit.e, q1, q2, ctx.doc);
+    if (!res) { ctx.msg('원은 서로 다른 두 점이 필요합니다 (첫 점에서 반시계로 둘째 점까지 지웁니다).'); return; }
+    ctx.replace(hit.e, res);
+    ctx.msg(res.length + '개로 나눴습니다.');
+  });
+
   // ---- 조회 ----
   def('DIST', '거리 재기', ['DI', '거리'], function* (ctx) {
     var a = yield { type: 'point', prompt: '첫 점' };
@@ -865,6 +1140,6 @@
   NS.Commands = {
     defs: C, alias: ALIAS, parsePoint: parsePoint, evalNum: evalNum, ortho: ortho, offsetPts: offsetPts,
     polyAreaBulge: polyAreaBulge, trimEntity: trimEntity, interPts: interPts, gripsOf: gripsOf, applyGrip: applyGrip,
-    entLength: entLength
+    entLength: entLength, findBoundary: findBoundary, stretchEnt: stretchEnt, breakEntity: breakEntity, polySlice: polySlice
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

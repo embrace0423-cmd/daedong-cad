@@ -51,6 +51,7 @@
   Writer.prototype.pt = function (base, p) { this.w(base, p.x); this.w(base + 10, p.y); this.w(base + 20, 0); };
 
   function ltypeElems(pat) { return pat || []; }
+  var hatchNames = null; // 해치 개체 → 블록 이름 (쓰는 동안만)
 
   function writeDXF(doc) {
     var W = new Writer();
@@ -143,7 +144,28 @@
       });
     }
     collect(doc.ents);
+    // 해치는 R12에 없어 블록(선·SOLID 묶음)으로 쓰고 한 번 끼워 넣는다
+    hatchNames = new Map();
+    var hatchList = [];
+    function hatchName() { // 사용자 블록 이름과 겹치지 않게
+      var i = hatchList.length + 1, nm = 'DCAD_HATCH_' + i;
+      while (names.used[nm] || doc.blocks[nm]) nm = 'DCAD_HATCH_' + (++i) + '_' + hatchList.length;
+      names.used[nm] = true;
+      return nm;
+    }
+    function findHatch(ents) { ents.forEach(function (e) { if (e.type === 'hatch' && !hatchNames.has(e)) { hatchNames.set(e, hatchName()); hatchList.push(e); } }); }
+    findHatch(doc.ents);
+    Object.keys(doc.blocks).forEach(function (k) { findHatch(doc.blocks[k].ents); });
     W.w(0, 'SECTION'); W.w(2, 'BLOCKS');
+    hatchList.forEach(function (h) {
+      var hn = hatchNames.get(h);
+      W.w(0, 'BLOCK'); W.w(8, '0'); W.w(2, hn); W.int(70, 0); W.pt(10, G.v(0, 0)); W.w(3, hn); W.w(1, '');
+      (Model.explode(h, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).forEach(function (pe) {
+        pe.layer = '0'; pe.color = 0; pe.ltype = 'CONTINUOUS';
+        writeEnt(W, pe, doc, lname, bname);
+      });
+      W.w(0, 'ENDBLK'); W.w(8, '0');
+    });
     need.forEach(function (n) {
       var b = doc.blocks[n], bn = bname(n);
       W.w(0, 'BLOCK'); W.w(8, '0'); W.w(2, bn); W.int(70, 0); W.pt(10, b.base); W.w(3, bn); W.w(1, '');
@@ -157,6 +179,7 @@
     doc.ents.forEach(function (e) { writeEnt(W, e, doc, lname, bname); });
     W.w(0, 'ENDSEC');
     W.w(0, 'EOF');
+    hatchNames = null;
     return W.lines.join('\r\n') + '\r\n';
   }
 
@@ -208,6 +231,13 @@
       case 'mtext': case 'dim': {
         var parts = Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers });
         (parts || []).forEach(function (p) { writeEnt(W, p, doc, lname, bname); });
+        break;
+      }
+      case 'hatch': {
+        var hn2 = hatchNames && hatchNames.get(e);
+        if (!hn2) break;
+        common(W, 'INSERT', e, lname); W.w(2, hn2); W.pt(10, G.v(0, 0));
+        W.w(41, 1); W.w(42, 1); W.w(43, 1); W.w(50, 0);
         break;
       }
       case 'insert':

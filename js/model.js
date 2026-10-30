@@ -251,6 +251,16 @@
       case 'ellipse': { var ep = ellipsePoints(e); return [{ k: 'P', pts: ep.pts, closed: ep.full }]; }
       case 'point': return [{ k: 'P', pts: [e.p, e.p] }];
       case 'text': case 'mtext': return [{ k: 'T', poly: textBox(e), ins: e.p }];
+      case 'hatch': {
+        var hpolys = NS.Hatch.polysOf(e), hp = [];
+        hpolys.forEach(function (pl) { hp.push({ k: 'P', pts: pl, closed: true, hb: true, fill: !!e.solid }); });
+        if (!e.solid) {
+          var hs = NS.Hatch.segments(e);
+          hs.segs.forEach(function (sg) { hp.push({ k: 'L', a: sg[0], b: sg[1], hp: true }); });
+          if (hs.dense) hp.dense = true;
+        }
+        return hp;
+      }
       case 'dim': {
         var dg = dimGeom(e, doc), out = [];
         dg.lines.forEach(function (l) { out.push({ k: 'L', a: l[0], b: l[1] }); });
@@ -459,6 +469,7 @@
         var ps = prims(e, doc), cnt = 0;
         for (var i = 0; i < ps.length && cnt < 400; i++) {
           var pr = ps[i];
+          if (pr.hp || pr.hb) continue;
           if (pr.k === 'L') { put(pr.a, 'end'); put(pr.b, 'end'); put(G.mid(pr.a, pr.b), 'mid'); cnt += 3; }
           else if (pr.k === 'C') { put(pr.c, 'cen'); cnt++; }
           else if (pr.k === 'A') { put(pr.c, 'cen'); put(G.polar(pr.c, pr.r, pr.a0), 'end'); put(G.polar(pr.c, pr.r, pr.a1), 'end'); cnt += 3; }
@@ -502,6 +513,15 @@
         if (e.width) e.width *= s;
         break;
       }
+      case 'hatch':
+        e.loops.forEach(function (l) { l.forEach(function (p) { ap(p); if (flip && p.bulge) p.bulge = -p.bulge; }); });
+        (e.fams || []).forEach(function (f) {
+          f.p = M.apply(m, f.p); f.d = M.vec(m, f.d); f.a = G.normAng(dirAng(f.a));
+          f.dash = f.dash.map(function (x) { return x * s; });
+        });
+        if (e.scale) e.scale *= s;
+        e.ang = G.normAng(dirAng(e.ang || 0));
+        break;
       case 'dim':
         ['p1', 'p2', 'loc', 'c', 'p'].forEach(function (k) { if (e[k]) ap(e[k]); });
         if (e.kind === 'lin') e.ang = dirAng(e.ang);
@@ -544,6 +564,13 @@
         dg.arrows.forEach(function (t) { res.push(k('poly', { pts: t.map(function (p) { return { x: p.x, y: p.y }; }), closed: true, fill: true })); });
         if (dg.text) res.push(k('text', { p: dg.text.p, h: dg.text.h, rot: dg.text.rot, s: dg.text.s, align: 'C', valign: 'B' }));
         return res;
+      }
+      case 'hatch': {
+        if (e.solid) return NS.Hatch.trapezoids(e).map(function (q) { return k('poly', { pts: q.map(function (p) { return { x: p.x, y: p.y }; }), closed: true, fill: true }); });
+        var hs = NS.Hatch.segments(e);
+        return hs.segs.map(function (sg) {
+          return G.eq(sg[0], sg[1], 1e-9) ? k('point', { p: { x: sg[0].x, y: sg[0].y } }) : k('line', { a: { x: sg[0].x, y: sg[0].y }, b: { x: sg[1].x, y: sg[1].y } });
+        });
       }
       case 'insert': {
         var blk = doc.blocks[e.name];

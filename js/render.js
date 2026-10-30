@@ -127,6 +127,28 @@
         break;
       }
       case 'poly': this.pathPoly(ctx, e.pts, e.closed); if (e.fill) ctx.fill(); ctx.stroke(); break;
+      case 'hatch': {
+        var pr = Model.prims(e, doc);
+        ctx.setLineDash([]);
+        if (e.solid) {
+          ctx.beginPath();
+          pr.forEach(function (q) { if (q.hb) { ctx.moveTo(q.pts[0].x, q.pts[0].y); for (var t = 1; t < q.pts.length; t++) ctx.lineTo(q.pts[t].x, q.pts[t].y); ctx.closePath(); } });
+          if (!hi) { ctx.fill('evenodd'); break; }
+          ctx.globalAlpha = 0.35; ctx.fill('evenodd'); ctx.globalAlpha = 1;
+        } else {
+          ctx.beginPath();
+          pr.forEach(function (q) { if (q.hp) { ctx.moveTo(q.a.x, q.a.y); ctx.lineTo(q.b.x + (q.a.x === q.b.x && q.a.y === q.b.y ? px * 0.01 : 0), q.b.y); } });
+          ctx.stroke();
+        }
+        if (hi || pr.dense) {
+          // 고른 해치나 너무 촘촘한 해치는 경계를 보여 준다
+          ctx.setLineDash(hi && hi.dash ? hi.dash.map(function (x) { return x * px; }) : [4 * px, 4 * px]);
+          ctx.beginPath();
+          pr.forEach(function (q) { if (q.hb) { ctx.moveTo(q.pts[0].x, q.pts[0].y); for (var t = 1; t < q.pts.length; t++) ctx.lineTo(q.pts[t].x, q.pts[t].y); ctx.closePath(); } });
+          ctx.stroke();
+        }
+        break;
+      }
       case 'point': {
         var s = px * 4;
         ctx.setLineDash([]);

@@ -50,6 +50,19 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   let h = await history();
   check(/넓이 21\.84 m²/.test(h) && /6\.61평/.test(h), '넓이: 21.84 m², 6.61평');
 
+  // 2-1) 해치: 벽 사이를 클릭 → 바깥·안쪽 두 경계, 무늬 바꾸기
+  await run('H');
+  await clickWorld(-50, 2000);
+  await run('');
+  let ht = await page.evaluate(() => DCAD.App.doc.ents.find((e) => e.type === 'hatch'));
+  check(ht && ht.loops.length === 2 && ht.pat === 'LINE45' && ht.fams.length === 1, '해치: 벽 사이 클릭 → 경계 2개(바깥·안쪽), 사선');
+  check(await page.evaluate(() => DCAD.App.doc.ents[0].type === 'hatch'), '해치는 다른 객체 뒤에 그려짐');
+  await runAll(['H', 'P', '잔디', 'S', '2']);
+  await clickWorld(2500, 2000);
+  await run('');
+  ht = await page.evaluate(() => DCAD.App.doc.ents.filter((e) => e.type === 'hatch').map((e) => [e.pat, e.loops.length, Math.round(e.scale)]));
+  check(JSON.stringify(ht[0]) === JSON.stringify(['GRASS', 1, 100]), '해치: 방 안 클릭, 잔디 무늬·축척 2 (1:50 → 100) ' + JSON.stringify(ht[0]));
+
   // 3) 문 기호 넣기
   await page.evaluate(() => DCAD.App.Engine.start('INSERT', { name: 'DOOR_900' }));
   await run('1000,100');
@@ -179,6 +192,38 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   await run('J');
   ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0]);
   check(ents.type === 'poly' && ents.closed && ents.pts.length === 4 && ents.pts.some((p) => Math.abs(Math.abs(p.bulge || 0) - 1) < 1e-9), '결합: 다시 닫힌 폴리선 하나');
+  // 블록 만들기: 사각형 + 원 → 블록 하나
+  await page.evaluate(() => DCAD.App.R.fit({ x0: 24000, y0: 4000, x1: 28000, y1: 7000 }));
+  await runAll(['REC', '25000,5000', '@400,300', 'C', '25200,5150', '100']);
+  await page.evaluate(() => { DCAD.App.sel.clear(); DCAD.App.doc.ents.slice(-2).forEach((e) => DCAD.App.sel.add(e.id)); });
+  await runAll(['B', '25000,5000', '내 의자']);
+  ents = await page.evaluate(() => ({ last: DCAD.App.doc.ents.slice(-1)[0], blk: DCAD.App.doc.blocks['내 의자'] }));
+  check(ents.last.type === 'insert' && ents.last.name === '내 의자' && ents.blk && ents.blk.ents.length === 2, '블록 만들기: "내 의자" (객체 2개)');
+  await page.click('[data-tab=lib]');
+  check(await page.evaluate(() => [...document.querySelectorAll('#pane-lib .lib-cats button')].some((b) => b.textContent === '이 도면의 블록')), '기호 탭에 "이 도면의 블록" 표시');
+  // 끊기: 선 가운데 200을 끊음
+  await runAll(['L', '25000,6000', '@1000,0', '']);
+  await run('BR');
+  await clickWorld(25400, 6000);
+  await runAll(['F', '25400,6000', '25600,6000']);
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-2).map((e) => [e.a.x, e.b.x]));
+  check(JSON.stringify(ents) === JSON.stringify([[25000, 25400], [25600, 26000]]), '끊기: 25400~25600 지움 ' + JSON.stringify(ents));
+  // 호 연장: 0~90° 호를 세로선까지
+  await runAll(['A', 'C', '27000,5000', '27300,5000', '27000,5300']);
+  await runAll(['L', '26850,4500', '@0,1500', '']);
+  await run('EX');
+  await clickWorld(27000, 5300);
+  await run('');
+  ents = await page.evaluate(() => DCAD.App.doc.ents.filter((e) => e.type === 'arc' && Math.abs(e.r - 300) < 1e-9).slice(-1)[0]);
+  check(Math.abs(ents.a1 * 180 / Math.PI - 120) < 1e-6, '호 연장: 끝각 90° → 120° (' + (ents.a1 * 180 / Math.PI).toFixed(3) + ')');
+  // 늘리기: 오른쪽 벽을 1000 오른쪽으로 (벽·해치·치수가 함께)
+  await page.evaluate(() => DCAD.App.zoomExtents());
+  await runAll(['S', '4800,-300', '5300,4300', '5000,0', '@1000,0']);
+  const wallAreas = await page.evaluate(() => DCAD.App.doc.ents.filter((e) => e.type === 'poly' && e.closed && e.layer === '벽체').map((e) => Math.abs(DCAD.Commands.polyAreaBulge(e.pts, true)) / 1e6).sort((a, b) => a - b));
+  check(wallAreas.some((a) => Math.abs(a - 6.2 * 4.2) < 1e-6) && wallAreas.some((a) => Math.abs(a - 5.8 * 3.8) < 1e-6), '늘리기: 벽 6.2×4.2 / 5.8×3.8 ' + JSON.stringify(wallAreas.map((a) => +a.toFixed(2))));
+  ht = await page.evaluate(() => { const h = DCAD.App.doc.ents.find((e) => e.type === 'hatch' && e.loops.length === 2); const b = DCAD.Model.bounds(h, DCAD.App.doc); return b.x1; });
+  check(Math.abs(ht - 6100) < 1e-6, '늘리기: 벽 해치 경계도 함께 (오른쪽 끝 ' + ht + ')');
+
   // 인쇄 준비 (실제 인쇄창은 막음)
   await page.evaluate(() => { window.print = () => { window.__printed = true; }; });
   await page.click('[data-act=print]');
@@ -240,7 +285,8 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   await page.setInputFiles('#file', fx);
   await page.waitForTimeout(300);
   h = await history();
-  check(/열었습니다: rich-r2018-utf8\.dxf/.test(h) && /HATCH 1개/.test(h), '받은 DXF 열기 + 해치 건너뜀 알림');
+  check(/열었습니다: rich-r2018-utf8\.dxf/.test(h) && !/읽지 못한 개체/.test(h.split('rich-r2018-utf8')[1] || ''), '받은 DXF 열기 (건너뛴 개체 없음)');
+  check(await page.evaluate(() => DCAD.App.doc.ents.some((e) => e.type === 'hatch')), '받은 DXF의 해치도 읽음');
   await page.screenshot({ path: path.join(OUT, 'ui-open-fixture.png') });
 
   // 17) 밝은 화면 + 도움말 + 새 도면 대화상자 캡처

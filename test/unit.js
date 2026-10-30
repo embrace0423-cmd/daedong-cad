@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-['aci', 'geom', 'model', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
+['aci', 'geom', 'model', 'hatch', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
 const D = globalThis.DCAD;
 const { G, Model, Commands: Cmd, Library: Lib, DXF } = D;
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≉ ${b}`);
@@ -174,4 +174,97 @@ test('SVG: 종이 크기 = 범위 ÷ 축척', () => {
   const svg = D.SVG.toSVG(doc);
   const m = /width="([\d.]+)mm" height="([\d.]+)mm"/.exec(svg);
   near(parseFloat(m[1]), 420, 1); near(parseFloat(m[2]), 297, 1);
+});
+
+test('해치: 사선 무늬는 경계 안에만, 길이 합 ≈ 넓이 ÷ 간격', () => {
+  const doc = Model.newDoc();
+  const loop = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  const h = Model.mk(doc, 'hatch', { loops: [loop], solid: false, pat: 'LINE45', scale: 1, ang: 0, fams: D.Hatch.families('LINE45', 1, 0) });
+  const r = D.Hatch.segments(h);
+  let total = 0;
+  r.segs.forEach(([a, b]) => {
+    total += G.dist(a, b);
+    [a, b].forEach((p) => assert.ok(p.x > -1e-6 && p.x < 100 + 1e-6 && p.y > -1e-6 && p.y < 100 + 1e-6));
+  });
+  near(total, 10000 / 3, 40);
+  // 구멍(섬)이 있으면 그만큼 빠진다
+  const hole = [{ x: 25, y: 25 }, { x: 75, y: 25 }, { x: 75, y: 75 }, { x: 25, y: 75 }];
+  const h2 = Model.mk(doc, 'hatch', { loops: [loop, hole], solid: false, pat: 'LINE45', scale: 1, ang: 0, fams: D.Hatch.families('LINE45', 1, 0) });
+  let t2 = 0; D.Hatch.segments(h2).segs.forEach(([a, b]) => { t2 += G.dist(a, b); });
+  near(t2, 7500 / 3, 40);
+  // 단색은 사다리꼴 넓이 = 7500
+  const h3 = Model.mk(doc, 'hatch', { loops: [loop, hole], solid: true, pat: 'SOLID', fams: [] });
+  let a3 = 0; D.Hatch.trapezoids(h3).forEach((q) => { a3 += Math.abs(G.polyArea(q)); });
+  near(a3, 7500, 1e-6);
+});
+
+test('해치: 클릭한 점의 경계 찾기 (벽 사이 = 바깥·안쪽 두 경계)', () => {
+  const doc = Lib.newFromTemplate('blank');
+  const add = (t, p) => { const e = Model.mk(doc, t, p); doc.ents.push(e); return e; };
+  const sq = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  add('poly', { pts: sq(0, 0, 1000, 1000), closed: true });
+  add('poly', { pts: sq(100, 100, 900, 900), closed: true });
+  add('circle', { c: { x: 500, y: 500 }, r: 100 });
+  Model.touch();
+  const ctx = { doc, visibleEnts: () => doc.ents };
+  let loops = Cmd.findBoundary(ctx, { x: 50, y: 500 });
+  assert.equal(loops.length, 2, '벽 사이: 바깥 + 안쪽');
+  loops = Cmd.findBoundary(ctx, { x: 300, y: 500 });
+  assert.equal(loops.length, 2, '방 안: 안쪽 사각형 + 원(섬)');
+  assert.equal(Cmd.findBoundary(ctx, { x: 2000, y: 0 }), null);
+});
+
+test('해치: DXF 읽기 (ezdxf 해치 5종) · 쓰기(블록) · SVG', () => {
+  const r = DXF.read(new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', 'hatch-r2018.dxf'))));
+  const hs = r.doc.ents.filter((e) => e.type === 'hatch');
+  assert.equal(hs.length, 5);
+  assert.deepEqual(r.report.skipped, {});
+  near(G.deg(hs[0].fams[0].a), 75); near(hs[0].fams[0].d.x, -6.133629, 1e-5); // ANSI31 ×2, 30°
+  near(Math.abs(Cmd.polyAreaBulge(hs[1].loops[0], true)), 6000 + Math.PI * 900, 1e-6); // 시계 방향 호 모서리
+  assert.equal(hs[2].loops.length, 2); assert.ok(hs[2].solid);
+  const b5 = Model.bounds(hs[4], r.doc); near(b5.x0, -150); near(b5.x1, -100); // -Z 방향
+  const txt = DXF.write(r.doc);
+  const back = DXF.read(txt).doc;
+  const hb = Object.keys(back.blocks).filter((n) => /^DCAD_HATCH_/.test(n));
+  assert.equal(hb.length, 5, '해치마다 블록 하나');
+  assert.ok(back.blocks[hb[0]].ents.length > 5);
+  assert.ok(back.blocks[hb[2]].ents.every((e) => e.type === 'poly' && e.fill), '단색 = SOLID 사다리꼴');
+  assert.ok(/fill-rule="evenodd"/.test(D.SVG.toSVG(r.doc)));
+});
+
+test('늘리기: 창 안의 끝점·치수 점만 움직임', () => {
+  const doc = Model.newDoc();
+  const ln = Model.mk(doc, 'line', { a: { x: 0, y: 0 }, b: { x: 1000, y: 0 } });
+  const dm = Model.mk(doc, 'dim', { kind: 'lin', p1: { x: 0, y: 0 }, p2: { x: 1000, y: 0 }, loc: { x: 0, y: -300 }, ang: 0 });
+  const bx = { x0: 900, y0: -100, x1: 1100, y1: 100 };
+  Cmd.stretchEnt(ln, bx, { x: 500, y: 0 }); Cmd.stretchEnt(dm, bx, { x: 500, y: 0 });
+  near(ln.a.x, 0); near(ln.b.x, 1500);
+  near(Model.dimGeom(dm, doc).value, 1500);
+});
+
+test('끊기: 선·닫힌 폴리선·열린 폴리선(호 구간)', () => {
+  const doc = Model.newDoc();
+  let r = Cmd.breakEntity(Model.mk(doc, 'line', { a: { x: 0, y: 0 }, b: { x: 100, y: 0 } }), { x: 30, y: 0 }, { x: 60, y: 0 }, doc);
+  assert.equal(r.length, 2); near(r[0].b.x, 30); near(r[1].a.x, 60);
+  r = Cmd.breakEntity(Model.mk(doc, 'line', { a: { x: 0, y: 0 }, b: { x: 100, y: 0 } }), { x: 40, y: 0 }, { x: 40, y: 0 }, doc);
+  assert.equal(r.length, 2); near(r[0].b.x, 40); near(r[1].a.x, 40);
+  const sq = Model.mk(doc, 'poly', { pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }], closed: true });
+  r = Cmd.breakEntity(sq, { x: 50, y: 0 }, { x: 50, y: 0 }, doc);
+  assert.equal(r.length, 1); assert.equal(r[0].closed, false);
+  assert.deepEqual(r[0].pts.map((p) => [p.x, p.y]), [[50, 0], [100, 0], [100, 100], [0, 100], [0, 0], [50, 0]]);
+  const op = Model.mk(doc, 'poly', { pts: [{ x: 0, y: 0, bulge: 1 }, { x: 100, y: 0 }, { x: 200, y: 0 }], closed: false });
+  r = Cmd.breakEntity(op, { x: 50, y: -50 }, { x: 150, y: 0 }, doc); // 반원 가운데 ~ 직선 가운데
+  assert.equal(r.length, 2);
+  near(r[0].pts[0].bulge, Math.tan(Math.PI / 8)); nearPt(r[0].pts[1], { x: 50, y: -50 });
+  nearPt(r[1].pts[0], { x: 150, y: 0 }); nearPt(r[1].pts[1], { x: 200, y: 0 });
+});
+
+test('간격띄우기: 호 구간 폴리선(경기장 모양)', () => {
+  // 100×60 + 반원 r30 양쪽, 반시계. 바깥으로 10 → 넓이 100·80 + π·40²
+  const st = [{ x: 0, y: 0 }, { x: 100, y: 0, bulge: 1 }, { x: 100, y: 60 }, { x: 0, y: 60, bulge: 1 }];
+  const out = Cmd.offsetPts(st, -10, true);
+  near(Math.abs(Cmd.polyAreaBulge(out, true)), 8000 + Math.PI * 1600, 1e-6);
+  const inn = Cmd.offsetPts(st, 10, true);
+  near(Math.abs(Cmd.polyAreaBulge(inn, true)), 100 * 40 + Math.PI * 400, 1e-6);
+  assert.equal(Cmd.offsetPts(st, 35, true), null, '반지름보다 안쪽은 불가');
 });

@@ -2,7 +2,7 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-['aci', 'geom', 'model', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
+['aci', 'geom', 'model', 'hatch', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
 const { G, Model, Commands: Cmd, Library: Lib, DXF } = globalThis.DCAD;
 
 const doc = Lib.newFromTemplate('remodel', { title: '리모델링 평면도 (예시)', date: '2026-10-29' });
@@ -23,6 +23,11 @@ const txt = (layer, x, y, h, s) => add(layer, 'text', { p: G.v(x, y), h, s, rot:
 wall([G.v(3000, 4000), G.v(11500, 4000), G.v(11500, 11000), G.v(3000, 11000)], 200, true, '벽체');
 wall([G.v(7600, 4100), G.v(7600, 10900)], 100, false, '신설벽');
 add('철거', 'poly', { pts: [G.v(5600, 7900), G.v(7550, 7900), G.v(7550, 8050), G.v(5600, 8050)], closed: true });
+// 해치: 기존 벽은 사선, 새 칸막이는 단색 (다른 객체 뒤에)
+const walls = doc.ents.filter((e) => e.type === 'poly' && e.layer === '벽체');
+const hatchOf = (layer, loops, pat) => { const k = doc.settings.scale; const e = Model.mk(doc, 'hatch', { loops, solid: pat === 'SOLID', pat, scale: k, ang: 0, fams: globalThis.DCAD.Hatch.families(pat, k, 0) }); e.layer = layer; doc.ents.unshift(e); };
+hatchOf('벽체', walls.map((w) => w.pts.map((p) => ({ x: p.x, y: p.y }))), 'LINE45');
+hatchOf('신설벽', [doc.ents.find((e) => e.layer === '신설벽').pts.map((p) => ({ x: p.x, y: p.y }))], 'SOLID');
 // 문·창
 sym('문창', 'DOOR_900', 7650, 6000, 90);
 sym('문창', 'DOOR_900', 3100, 10400, -90);
