@@ -1,0 +1,87 @@
+{
+  "name": "daedong-cad",
+  "productName": "대동 CAD",
+  "version": "1.3.0",
+  "description": "대동 2D 도면 프로그램 (DXF)",
+  "author": "대동(大洞)",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "node prepare.js && electron .",
+    "dist:win": "node build-win.js",
+    "dist:dir": "node prepare.js && electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "44.10.0",
+    "electron-builder": "26.18.1"
+  },
+  "build": {
+    "appId": "kr.daedong.cad",
+    "productName": "대동 CAD",
+    "executableName": "DaedongCAD",
+    "copyright": "대동(大洞)",
+    "directories": {
+      "output": "out",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "app/**"
+    ],
+    "asar": true,
+    "electronLanguages": [
+      "ko",
+      "en-US"
+    ],
+    "compression": "maximum",
+    "fileAssociations": [
+      {
+        "ext": "dxf",
+        "name": "DXF",
+        "description": "DXF 도면",
+        "role": "Editor",
+        "icon": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "대동 CAD",
+      "uninstallDisplayName": "대동 CAD",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerLanguages": [
+        "ko_KR"
+      ],
+      "language": "1042",
+      "artifactName": "DaedongCAD-Setup-${version}.exe",
+      "differentialPackage": false
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.png",
+      "category": "Graphics"
+    },
+    "publish": null
+  }
+}

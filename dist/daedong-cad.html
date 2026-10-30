@@ -175,7 +175,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   body { display: block; background: #fff; overflow: visible; }
   body > *:not(#printarea) { display: none !important; }
   #printarea { display: block; }
-  #printarea svg { width: 100%; height: auto; }
+  #printarea svg { display: block; width: 100%; height: auto; }
 }
 @media (max-width: 900px) {
   #tools { width: 128px; }
@@ -202,6 +202,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     <button data-act="png" title="그림 파일(PNG)로 내보내기">PNG</button>
     <button data-act="svg" title="벡터 그림(SVG), 종이 크기는 축척대로">SVG</button>
     <button data-act="print" title="인쇄 (도곽 범위를 축척대로)">인쇄</button>
+    <button data-act="pdf" data-desktop hidden title="PDF로 저장 (도곽 범위를 종이 크기·축척 그대로, 흑백)">PDF</button>
     <span class="sep"></span>
     <button data-act="undo" title="되돌리기 (Ctrl+Z)">되돌리기</button>
     <button data-act="redo" title="다시 하기 (Ctrl+Y)">다시</button>
@@ -4371,10 +4372,13 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   var AUTOSAVE = 'daedong-cad.autosave.v1', PREFS = 'daedong-cad.prefs.v1', CLIP = 'daedong-cad.clip.v1';
   function lsGet(k) { try { return g.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { g.localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  // 데스크톱 앱(desktop/, Electron)에서만 있는 PC 파일 연결. 브라우저에서는 null이고 내려받기로 저장한다.
+  var Desk = g.dcadDesktop || null;
 
   var App = {
     doc: null, R: null, sel: new Set(), hover: null,
     undo: [], redo: [], dirty: false,
+    file: null, // 데스크톱: 지금 도면의 PC 파일 { path, name, kind: 'dxf'|'work', ours: 우리가 쓴 파일이면 true }
     tog: { grid: true, snap: false, ortho: false, osnap: true, lw: true },
     osnapKinds: { end: true, mid: true, cen: true, qua: true, int: true, ins: true, per: true, nea: false },
     cursor: null, cursorWorld: null, snap: null,
@@ -4409,7 +4413,8 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   function selectedEnts() { var out = []; App.sel.forEach(function (id) { var e = entById(id); if (e) out.push(e); }); return out; }
   function updateTitle() {
     $('#docname').textContent = (App.dirty ? '● ' : '') + (App.doc.name || '새 도면') + '  ·  1:' + G.fmt(App.doc.settings.scale || 1, 3) + (App.doc.settings.sheet ? '  ·  ' + App.doc.settings.sheet : '');
-    document.title = (App.doc.name || '새 도면') + ' - 대동 CAD';
+    document.title = (App.dirty ? '● ' : '') + (App.file ? App.file.name : (App.doc.name || '새 도면')) + ' - 대동 CAD';
+    if (Desk) Desk.setDirty(App.dirty);
   }
 
   // ---------- 되돌리기 ----------
@@ -4884,8 +4889,8 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       var lk = k.toLowerCase();
       if (lk === 'z') { ev.preventDefault(); ev.shiftKey ? doRedo() : doUndo(); return; }
       if (lk === 'y') { ev.preventDefault(); doRedo(); return; }
-      if (lk === 's') { ev.preventDefault(); saveDXF(); return; }
-      if (lk === 'o') { ev.preventDefault(); $('#file').click(); return; }
+      if (lk === 's') { ev.preventDefault(); saveCurrent({ ask: ev.shiftKey }); return; }
+      if (lk === 'o') { ev.preventDefault(); openAsk(); return; }
       if (lk === 'c' && ev.target.id !== 'cmd' && !window.getSelection().toString()) { ev.preventDefault(); copySel(); return; }
       if (lk === 'v' && ev.target.id !== 'cmd') { ev.preventDefault(); Engine.start('_PASTE'); return; }
       if (lk === 'a' && ev.target.id !== 'cmd') { ev.preventDefault(); pickableEnts().forEach(function (e) { App.sel.add(e.id); }); refreshProps(); redraw(); return; }
@@ -5286,47 +5291,97 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
   }
   function baseName() { return (App.doc.name || '도면').replace(/[\\/:*?"<>|]+/g, '_').trim() || '도면'; }
-  function saveDXF() {
-    try {
-      download(baseName() + '.dxf', NS.DXF.write(App.doc), 'application/dxf');
-      App.dirty = false; updateTitle();
-      msg('DXF(R12)로 저장했습니다: ' + baseName() + '.dxf  (치수·타원·여러 줄 문자는 선과 문자로 풀어서 저장)', 'ok');
-    } catch (err) { console.error(err); msg('DXF 저장 실패: ' + err.message, 'err'); }
+  // 저장: 브라우저는 내려받기, 데스크톱은 PC에 바로 쓴다. 성공하면 { path, name }(브라우저는 이름 문자열), 취소하면 null
+  function saveFile(name, data, type, kind, opts) {
+    opts = opts || {};
+    if (!Desk) { download(name, data, type); return Promise.resolve(name); }
+    var cur = !opts.ask && App.file && App.file.kind === kind && App.file.ours ? App.file.path : null;
+    var p = data instanceof Blob ? data.arrayBuffer().then(function (b) { return new Uint8Array(b); }) : Promise.resolve(data);
+    return p.then(function (d) { return Desk.save({ path: cur, name: name, kind: kind, data: d }); });
   }
-  function saveWork() {
-    download(baseName() + '.dcad.json', JSON.stringify(App.doc), 'application/json');
-    App.dirty = false; updateTitle();
-    msg('작업 파일로 저장했습니다 (치수·벽·블록 정보가 그대로 남습니다).', 'ok');
+  function setFile(r, kind) {
+    App.file = { path: r.path, name: r.name, kind: kind, ours: true };
+    App.doc.name = r.name.replace(/(\.dcad)?\.json$|\.dcad$|\.dxf$/i, '') || App.doc.name;
+  }
+  function saved(kind, okMsg) {
+    return function (r) {
+      if (!r) { msg('저장을 취소했습니다.'); return false; }
+      if (Desk) setFile(r, kind);
+      App.dirty = false; updateTitle(); scheduleAutosave();
+      msg(okMsg + (r.path || r), 'ok');
+      return true;
+    };
+  }
+  function saveFailed(what) { return function (err) { console.error(err); msg(what + ' 저장 실패: ' + (err && err.message || err), 'err'); return false; }; }
+  function saveDXF(opts) {
+    var data;
+    try { data = NS.DXF.write(App.doc); } catch (err) { return Promise.resolve(saveFailed('DXF')(err)); }
+    return saveFile(baseName() + '.dxf', data, 'application/dxf', 'dxf', opts)
+      .then(saved('dxf', 'DXF(R12)로 저장했습니다 (치수·타원·여러 줄 문자는 선과 문자로 풀어서 저장): '), saveFailed('DXF'));
+  }
+  function saveWork(opts) {
+    return saveFile(baseName() + '.dcad.json', JSON.stringify(App.doc), 'application/json', 'work', opts)
+      .then(saved('work', '작업 파일로 저장했습니다 (치수·벽·블록 정보가 그대로 남습니다): '), saveFailed('작업 파일'));
+  }
+  // Ctrl+S: 작업 파일을 열었으면 작업 파일로, 아니면 DXF로. Ctrl+Shift+S는 다른 이름으로
+  function saveCurrent(opts) { return App.file && App.file.kind === 'work' ? saveWork(opts) : saveDXF(opts); }
+  // 그림·표 내보내기 (데스크톱은 언제나 저장 위치를 묻는다)
+  function exportFile(name, data, type, kind, what) {
+    return saveFile(name, data, type, kind, { ask: true }).then(function (r) {
+      if (!r) { msg('저장을 취소했습니다.'); return false; }
+      msg(what + ': ' + (r.path || r), 'ok');
+      return true;
+    }, saveFailed(what));
+  }
+  // 데스크톱에서 저장하지 않은 도면을 두고 다른 도면을 열 때 묻기 (브라우저는 되돌리기로 돌아갈 수 있어 묻지 않음)
+  function okToReplace() {
+    if (!Desk || !App.dirty) return true;
+    return g.confirm('지금 도면의 바뀐 내용을 아직 저장하지 않았습니다.\n저장하지 않고 다른 도면으로 바꿀까요?');
+  }
+  function replaceDoc(d, file) {
+    if (Desk) { App.undo.length = 0; App.redo.length = 0; } else pushUndo();
+    App.file = file;
+    setDoc(d); App.dirty = false; updateTitle();
+  }
+  function openAsk() {
+    if (!Desk) { $('#file').click(); return; }
+    if (!okToReplace()) return;
+    Desk.open().then(function (f) { if (f) openData(f.name, f.data, f.path); }, function (err) { msg('열기 실패: ' + (err && err.message || err), 'err'); });
+  }
+  function openPath(p) {
+    if (!okToReplace()) return;
+    Desk.read(p).then(function (f) { openData(f.name, f.data, f.path); }, function (err) { msg('열기 실패: ' + (err && err.message || err), 'err'); });
   }
   function openFile(file) {
-    var name = file.name || '';
-    var reader = new FileReader();
+    var fp = Desk && Desk.pathOf(file);
+    if (fp) { openPath(fp); return; }
+    if (!okToReplace()) return;
+    var name = file.name || '', reader = new FileReader();
     reader.onerror = function () { msg('파일을 읽지 못했습니다.', 'err'); };
+    reader.onload = function () { openData(name, new Uint8Array(reader.result), null); };
+    reader.readAsArrayBuffer(file);
+  }
+  function openData(name, bytes, path) {
     if (/\.json$|\.dcad$/i.test(name)) {
-      reader.onload = function () {
-        try {
-          var d = JSON.parse(reader.result);
-          if (d.format !== 'daedong-cad') throw new Error('대동 CAD 작업 파일이 아닙니다.');
-          pushUndo(); setDoc(d); App.dirty = false; updateTitle();
-          msg('열었습니다: ' + name, 'ok');
-        } catch (err) { msg('열기 실패: ' + err.message, 'err'); }
-      };
-      reader.readAsText(file);
+      try {
+        var d = JSON.parse(new TextDecoder('utf-8').decode(bytes));
+        if (d.format !== 'daedong-cad') throw new Error('대동 CAD 작업 파일이 아닙니다.');
+        replaceDoc(d, path ? { path: path, name: name, kind: 'work', ours: true } : null);
+        msg('열었습니다: ' + (path || name), 'ok');
+      } catch (err) { msg('열기 실패: ' + err.message, 'err'); }
       return;
     }
-    reader.onload = function () {
-      try {
-        var t0 = performance.now();
-        var r = NS.DXF.read(new Uint8Array(reader.result));
-        r.doc.name = name.replace(/\.dxf$/i, '');
-        pushUndo(); setDoc(r.doc); App.dirty = false; updateTitle();
-        var sk = Object.keys(r.report.skipped);
-        msg('열었습니다: ' + name + ' (' + (r.report.ver || '버전 미상') + ', 개체 ' + r.doc.ents.length + '개, ' + Math.round(performance.now() - t0) + 'ms)', 'ok');
-        if (sk.length) msg('읽지 못한 개체: ' + sk.map(function (k) { return k + ' ' + r.report.skipped[k] + '개'; }).join(', ') + ' (해치 등은 아직 지원하지 않습니다)', 'err');
-        r.report.warnings.forEach(function (w) { msg(w, 'err'); });
-      } catch (err) { console.error(err); msg('DXF 열기 실패: ' + err.message, 'err'); }
-    };
-    reader.readAsArrayBuffer(file);
+    try {
+      var t0 = performance.now();
+      var r = NS.DXF.read(bytes);
+      r.doc.name = name.replace(/\.dxf$/i, '');
+      // 받은 DXF는 처음 저장할 때 한 번 묻는다 (R12로 다시 쓰면 원본의 일부 정보가 풀리므로)
+      replaceDoc(r.doc, path ? { path: path, name: name, kind: 'dxf', ours: false } : null);
+      var sk = Object.keys(r.report.skipped);
+      msg('열었습니다: ' + (path || name) + ' (' + (r.report.ver || '버전 미상') + ', 개체 ' + r.doc.ents.length + '개, ' + Math.round(performance.now() - t0) + 'ms)', 'ok');
+      if (sk.length) msg('읽지 못한 개체: ' + sk.map(function (k) { return k + ' ' + r.report.skipped[k] + '개'; }).join(', ') + ' (해치 등은 아직 지원하지 않습니다)', 'err');
+      r.report.warnings.forEach(function (w) { msg(w, 'err'); });
+    } catch (err) { console.error(err); msg('DXF 열기 실패: ' + err.message, 'err'); }
   }
   // 출력 범위: 도곽(표제란 층의 가장 큰 사각형)이 있으면 그 범위, 없으면 전체
   function sheetBox() {
@@ -5347,15 +5402,15 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     if (Math.max(W, H) > lim) ppm *= lim / Math.max(W, H);
     var c = document.createElement('canvas');
     App.R.renderTo(c, App.doc, box, ppm, false);
-    c.toBlob(function (b) { download(baseName() + '.png', b, 'image/png'); msg('PNG로 내보냈습니다 (' + c.width + '×' + c.height + ').', 'ok'); }, 'image/png');
+    c.toBlob(function (b) { exportFile(baseName() + '.png', b, 'image/png', 'png', 'PNG로 내보냈습니다 (' + c.width + '×' + c.height + ')'); }, 'image/png');
   }
   function exportSVG() {
     var box = sheetBox();
     var svg = NS.SVG.toSVG(App.doc, { box: box || undefined, pad: box ? 0 : (App.doc.settings.scale || 1) * 5 });
-    download(baseName() + '.svg', svg, 'image/svg+xml');
-    msg('SVG로 내보냈습니다' + (box ? ' (도곽 범위, 종이 크기 = 실제 축척)' : ' (전체 범위)') + '.', 'ok');
+    exportFile(baseName() + '.svg', svg, 'image/svg+xml', 'svg', 'SVG로 내보냈습니다' + (box ? ' (도곽 범위, 종이 크기 = 실제 축척)' : ' (전체 범위)'));
   }
-  function printDoc() {
+  // 인쇄·PDF 준비: 도곽 범위를 흑백 SVG로 #printarea에 넣고 종이 크기를 맞춘다
+  function preparePrint() {
     var box = sheetBox();
     var svg = NS.SVG.toSVG(App.doc, { box: box || undefined, pad: box ? 0 : (App.doc.settings.scale || 1) * 5, mono: true });
     var pa = $('#printarea');
@@ -5363,10 +5418,23 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     var st = document.getElementById('page-style') || document.createElement('style');
     st.id = 'page-style';
     var sv = pa.querySelector('svg'), w = parseFloat(sv.getAttribute('width')), h = parseFloat(sv.getAttribute('height'));
-    st.textContent = '@media print { @page { size: ' + w + 'mm ' + h + 'mm; margin: 0; } #printarea svg { width: ' + w + 'mm; height: ' + h + 'mm; } }';
+    st.textContent = '@media print { @page { size: ' + w + 'mm ' + h + 'mm; margin: 0; } #printarea { width: ' + w + 'mm; height: ' + h + 'mm; overflow: hidden; } #printarea svg { width: ' + w + 'mm; height: ' + h + 'mm; } }';
     document.head.appendChild(st);
-    msg('인쇄 창을 엽니다. 종이 크기는 ' + G.fmt(w, 0) + '×' + G.fmt(h, 0) + 'mm (흑백)' + (box ? '' : ' — 도곽이 없어 전체 범위입니다') + '. 인쇄 설정에서 "실제 크기(100%)"를 고르세요.');
+    return { w: w, h: h, box: box };
+  }
+  function printDoc() {
+    var pp = preparePrint();
+    msg('인쇄 창을 엽니다. 종이 크기는 ' + G.fmt(pp.w, 0) + '×' + G.fmt(pp.h, 0) + 'mm (흑백)' + (pp.box ? '' : ' — 도곽이 없어 전체 범위입니다') + '. 인쇄 설정에서 "실제 크기(100%)"를 고르세요.');
     setTimeout(function () { g.print(); }, 50);
+  }
+  // PDF 저장 (데스크톱): 인쇄와 같은 그림을 종이 크기 그대로 PDF로
+  function exportPDF() {
+    if (!Desk) { printDoc(); return; }
+    var pp = preparePrint();
+    Desk.pdf({ name: baseName() + '.pdf' }).then(function (r) {
+      if (!r) { msg('저장을 취소했습니다.'); return; }
+      msg('PDF로 저장했습니다 (' + G.fmt(pp.w, 0) + '×' + G.fmt(pp.h, 0) + 'mm, 흑백, 실제 축척' + (pp.box ? '' : ', 도곽이 없어 전체 범위') + '): ' + r.path, 'ok');
+    }, saveFailed('PDF'));
   }
 
   // ---------- 새 도면 ----------
@@ -5398,7 +5466,9 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       date: new Date().toISOString().slice(0, 10), company: $('#new-company').value
     });
     d.name = $('#new-title').value || d.name;
-    if (App.doc && App.doc.ents.length) pushUndo();
+    if (!okToReplace()) return;
+    if (Desk) { App.undo.length = 0; App.redo.length = 0; } else if (App.doc && App.doc.ents.length) pushUndo();
+    App.file = null;
     setDoc(d);
     App.dirty = false; updateTitle(); scheduleAutosave();
     $('#dlg-new').close();
@@ -5476,12 +5546,13 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
       b.addEventListener('click', function () {
         switch (b.dataset.act) {
           case 'new': openNew(); break;
-          case 'open': $('#file').click(); break;
+          case 'open': openAsk(); break;
           case 'save': saveDXF(); break;
           case 'savework': saveWork(); break;
           case 'png': exportPNG(); break;
           case 'svg': exportSVG(); break;
           case 'print': printDoc(); break;
+          case 'pdf': exportPDF(); break;
           case 'undo': doUndo(); break;
           case 'redo': doRedo(); break;
           case 'zoomext': zoomExtents(); break;
@@ -5503,8 +5574,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     $('#new-ok').addEventListener('click', createNew);
     $('#qto-csv').addEventListener('click', function () {
       if (!App.qto) return;
-      download(baseName() + '-물량.csv', Cmd.quantitiesCSV(App.qto.q, (App.doc.name || '도면') + ' 물량 (' + App.qto.scope + ')'), 'text/csv');
-      msg('물량표를 CSV로 저장했습니다 (엑셀에서 열림).', 'ok');
+      exportFile(baseName() + '-물량.csv', Cmd.quantitiesCSV(App.qto.q, (App.doc.name || '도면') + ' 물량 (' + App.qto.scope + ')'), 'text/csv', 'csv', '물량표를 CSV로 저장했습니다 (엑셀에서 열림)');
     });
     $('#file').addEventListener('change', function () { var f = this.files[0]; if (f) openFile(f); this.value = ''; });
     // 끌어다 놓기
@@ -5527,6 +5597,19 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
     renderLib();
     showPrompt();
     redraw();
+    if (Desk) initDesktop();
+  }
+  // 데스크톱 앱: PDF 버튼, 두 번 클릭한 파일 열기, 닫을 때 저장
+  function initDesktop() {
+    document.body.classList.add('desktop');
+    $$('[data-desktop]').forEach(function (b) { b.hidden = false; });
+    Desk.onOpenPath(function (p) { openPath(p); });
+    Desk.onSaveAndClose(function () { saveCurrent().then(function (ok) { if (ok) Desk.closeNow(); }); });
+    Desk.initialFile().then(function (f) {
+      if (!f) return;
+      if ($('#dlg-new').open) $('#dlg-new').close();
+      openData(f.name, f.data, f.path);
+    }, function (err) { msg('열기 실패: ' + (err && err.message || err), 'err'); });
   }
   function showTab(name) {
     tabNow = name;

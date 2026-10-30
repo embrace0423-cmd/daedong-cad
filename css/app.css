@@ -168,7 +168,7 @@ table.qto td.num { text-align: right; font-family: var(--mono); }
   body { display: block; background: #fff; overflow: visible; }
   body > *:not(#printarea) { display: none !important; }
   #printarea { display: block; }
-  #printarea svg { width: 100%; height: auto; }
+  #printarea svg { display: block; width: 100%; height: auto; }
 }
 @media (max-width: 900px) {
   #tools { width: 128px; }
