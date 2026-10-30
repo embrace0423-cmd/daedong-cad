@@ -131,7 +131,10 @@
               var col = f(tags, 62, 7), flags = f(tags, 70, 0);
               var lt = (s(tags, 6, 'CONTINUOUS') || 'CONTINUOUS').toUpperCase();
               if (!Model.layerOf(doc, nm)) {
-                doc.layers.push({ name: nm, color: Math.abs(col) || 7, ltype: lt, visible: col >= 0 && !(flags & 1), locked: !!(flags & 4) });
+                var nl = { name: nm, color: Math.abs(col) || 7, ltype: lt, visible: col >= 0 && !(flags & 1), locked: !!(flags & 4) };
+                var lwl = f(tags, 370, -3);
+                if (lwl > 0) nl.lw = lwl / 100;
+                doc.layers.push(nl);
               }
             } else {
               var ln = decodeStr(s(tags, 2, '')).toUpperCase();
@@ -191,6 +194,8 @@
       if (lt) e.ltype = lt.toUpperCase();
       var c = f(tags, 62, 256);
       e.color = c < 0 ? Math.abs(c) : c;
+      var lwe = f(tags, 370, -1); // 1/100 mm, -1 도면층 따름, -2 블록 따름
+      if (lwe > 0) e.lw = lwe / 100; else if (lwe === -2) e.lw = 'BYBLOCK';
       if (!Model.layerOf(doc, e.layer)) Model.ensureLayer(doc, e.layer, 7);
       return e;
     }

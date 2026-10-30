@@ -11,6 +11,7 @@
     this.ctx = canvas.getContext('2d');
     this.view = { cx: 0, cy: 0, scale: 1 };
     this.dark = true;
+    this.showLw = false; this.lwPx = 4; // 선 굵기 보이기, 종이 1mm당 화면 픽셀
     this.w = 0; this.h = 0; this.dpr = 1;
   }
   Renderer.prototype.resize = function () {
@@ -106,7 +107,8 @@
     var color = hi ? hi.color : Model.aciRgb(aci, this.dark);
     ctx.strokeStyle = color; ctx.fillStyle = color;
     ctx.globalAlpha = faded && !hi ? 0.55 : 1;
-    ctx.lineWidth = px * (hi ? hi.width : 1);
+    var lwW = this.showLw ? Math.max(1, Model.entLw(e, doc, parent) * this.lwPx) : 1;
+    ctx.lineWidth = px * (hi ? (hi.keepLtype ? lwW : Math.max(hi.width, lwW)) : lwW);
     var dash = null;
     if (!hi || hi.keepLtype) {
       var lt = Model.entLtype(e, doc, parent);
@@ -326,6 +328,7 @@
     var w = Math.max(1, Math.round((box.x1 - box.x0) * pxPerMm)), h = Math.max(1, Math.round((box.y1 - box.y0) * pxPerMm));
     canvas.width = w; canvas.height = h;
     r.w = w; r.h = h; r.dpr = 1; r.dark = false;
+    r.showLw = true; r.lwPx = pxPerMm * (doc.settings.scale || 1); // 종이 mm 굵기 그대로
     r.view = { cx: (box.x0 + box.x1) / 2, cy: (box.y0 + box.y1) / 2, scale: pxPerMm };
     var ctx = r.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);

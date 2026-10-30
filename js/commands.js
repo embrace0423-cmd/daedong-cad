@@ -866,10 +866,36 @@
     for (var i = 0; i < keys.length; i++) if (keys[i] === up || NS.Hatch.PATTERNS[keys[i]].label.indexOf(v) === 0) return keys[i];
     return null;
   }
-  // 점을 둘러싼 가장 작은 닫힌 개체 + 그 안의 닫힌 개체(섬)
+  // 클릭한 점의 해치 경계: 먼저 선 그래프(화면에 보이는 객체)로 찾고, 닫힌 개체와 같은 고리는 정확한 곡선으로 바꾼다
   function findBoundary(ctx, p) {
+    // 도곽·표제란은 경계로 쓰지 않는다
+    var ents = ctx.visibleEnts().filter(function (e) { return e.layer !== '표제란'; });
+    var vb = ctx.viewBox ? ctx.viewBox() : null;
+    if (vb) ents = ents.filter(function (e) { var b = Model.bounds(e, ctx.doc); return G.boxValid(b) && G.boxHit(b, vb); });
+    var r = NS.Region ? NS.Region.find(ents, ctx.doc, p) : null;
+    if (r && r.tooMany) { ctx.msg('화면에 선이 너무 많아(' + r.tooMany + '개) 닫힌 객체로만 찾습니다. 확대해서 다시 해 보세요.'); return findBoundaryClosed(ctx, p); }
+    if (!r) return findBoundaryClosed(ctx, p);
+    var closed = [];
+    ents.forEach(function (e) {
+      if (!(e.type === 'poly' && e.closed) && e.type !== 'circle' && e.type !== 'ellipse') return;
+      var lp = NS.Hatch.loopOf(e);
+      if (lp) closed.push({ loop: lp, box: Model.bounds(e, ctx.doc), area: NS.Hatch.loopArea(lp) });
+    });
+    return r.loops.map(function (L) {
+      var b = G.box(); L.forEach(function (P) { G.boxAdd(b, P); });
+      var a = Math.abs(G.polyArea(L)), d = Math.hypot(b.x1 - b.x0, b.y1 - b.y0) / 500;
+      for (var i = 0; i < closed.length; i++) {
+        var c = closed[i];
+        if (Math.abs(c.box.x0 - b.x0) < d && Math.abs(c.box.x1 - b.x1) < d && Math.abs(c.box.y0 - b.y0) < d && Math.abs(c.box.y1 - b.y1) < d && Math.abs(c.area - a) < a * 0.03) return c.loop;
+      }
+      return L;
+    });
+  }
+  // 점을 둘러싼 가장 작은 닫힌 개체 + 그 안의 닫힌 개체(섬)
+  function findBoundaryClosed(ctx, p) {
     var cands = [];
     ctx.visibleEnts().forEach(function (e) {
+      if (e.layer === '표제란') return;
       if (!(e.type === 'poly' && e.closed) && e.type !== 'circle' && e.type !== 'ellipse') return;
       var loop = NS.Hatch.loopOf(e);
       if (!loop) return;
@@ -918,7 +944,7 @@
         if (!loops.length) { ctx.msg('닫힌 폴리선·원·타원을 골라 주세요.'); continue; }
       } else {
         loops = findBoundary(ctx, p);
-        if (!loops) { ctx.msg('그 점을 둘러싼 닫힌 경계(닫힌 폴리선·원·타원)가 없습니다. 선으로 그린 테두리는 결합(J)으로 닫힌 폴리선을 만든 뒤 해 보세요.'); continue; }
+        if (!loops) { ctx.msg('그 점을 둘러싼 닫힌 경계를 찾지 못했습니다. 테두리 선이 서로 맞닿아 있는지(틈이 없는지) 보고, 테두리 전체가 화면에 보이게 한 뒤 다시 해 보세요.'); continue; }
       }
       var k = (ctx.doc.settings.scale || 1) * st.hatchScale, ang = G.rad(st.hatchAng), P = NS.Hatch.PATTERNS[st.hatchPat];
       var e = ctx.tmp('hatch', { loops: loops, solid: !!P.solid, pat: st.hatchPat, scale: k, ang: ang, fams: NS.Hatch.families(st.hatchPat, k, ang) });
@@ -1082,6 +1108,68 @@
     ctx.msg(res.length + '개로 나눴습니다.');
   });
 
+  // ---- 물량 산출 ----
+  // 블록 개수, 도면층별 길이, 닫힌 도형·해치 넓이
+  function quantities(ents, doc) {
+    var blocks = {}, lengths = {}, areas = {};
+    function addArea(key, layer, kind, a) {
+      var o = areas[key] || (areas[key] = { layer: layer, kind: kind, count: 0, m2: 0 });
+      o.count++; o.m2 += Math.abs(a) / 1e6;
+    }
+    ents.forEach(function (e) {
+      if (e.type === 'insert') {
+        var sym = NS.Library.symbolByName(e.name);
+        var b = blocks[e.name] || (blocks[e.name] = { name: e.name, label: sym ? sym.label : e.name, count: 0 });
+        b.count++;
+        return;
+      }
+      if (/^(line|arc|circle|poly|ellipse)$/.test(e.type)) {
+        lengths[e.layer] = (lengths[e.layer] || 0) + entLength(e, doc) / 1000;
+        if (e.type === 'poly' && e.closed) addArea(e.layer + '|닫힌 폴리선', e.layer, '닫힌 폴리선', polyAreaBulge(e.pts, true));
+        else if (e.type === 'circle') addArea(e.layer + '|원', e.layer, '원', Math.PI * e.r * e.r);
+        else if (e.type === 'ellipse' && G.sweep(e.t0 || 0, e.t1 === undefined ? TAU : e.t1) >= TAU - 1e-9) addArea(e.layer + '|타원', e.layer, '타원', Math.PI * G.len(e.major) * G.len(e.major) * e.ratio);
+      }
+      if (e.type === 'hatch') {
+        var a = 0;
+        NS.Hatch.trapezoids(e).forEach(function (q) { a += Math.abs(G.polyArea(q)); });
+        var lab = NS.Hatch.PATTERNS[e.pat] ? NS.Hatch.PATTERNS[e.pat].label : (e.pat || '해치');
+        addArea(e.layer + '|해치 ' + lab, e.layer, '해치: ' + lab, a);
+      }
+    });
+    var byCount = function (a, b) { return b.count - a.count || (a.label > b.label ? 1 : -1); };
+    return {
+      blocks: Object.keys(blocks).map(function (k) { return blocks[k]; }).sort(byCount),
+      lengths: Object.keys(lengths).map(function (k) { return { layer: k, m: lengths[k] }; }).sort(function (a, b) { return b.m - a.m; }),
+      areas: Object.keys(areas).map(function (k) { return areas[k]; }).sort(function (a, b) { return b.m2 - a.m2; })
+    };
+  }
+  function quantitiesCSV(q, title) {
+    var rows = [['구분', '도면층·이름', '내용', '수량', '단위']];
+    q.blocks.forEach(function (b) { rows.push(['개수', b.label, b.name, b.count, '개']); });
+    q.lengths.forEach(function (l) { rows.push(['길이', l.layer, '선·호·원·폴리선 합', G.fmt(l.m, 3), 'm']); });
+    q.areas.forEach(function (a) { rows.push(['넓이', a.layer, a.kind + ' ' + a.count + '개', G.fmt(a.m2, 3), 'm²']); rows.push(['넓이(평)', a.layer, a.kind, G.fmt(a.m2 / 3.305785, 2), '평']); });
+    var esc = function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return '﻿' + (title ? esc(title) + '\r\n' : '') + rows.map(function (r) { return r.map(esc).join(','); }).join('\r\n') + '\r\n';
+  }
+  def('QTO', '물량 산출', ['QTO', '물량'], function* (ctx) {
+    var sel = ctx.selectedEnts ? ctx.selectedEnts() : [];
+    var ents = sel.length ? sel : ctx.visibleEnts();
+    ctx.showQto(quantities(ents, ctx.doc), sel.length ? '고른 객체 ' + sel.length + '개' : '도면 전체 (보이는 도면층)');
+  });
+
+  // ---- 붙여넣기 (Ctrl+C로 복사한 것) ----
+  def('_PASTE', '붙여넣기', ['PASTE', '붙여넣기'], function* (ctx) {
+    var clip = ctx.clipboard();
+    if (!clip || !clip.ents || !clip.ents.length) { ctx.msg('복사한 것이 없습니다. 객체를 고르고 Ctrl+C 하세요.'); return; }
+    Object.keys(clip.blocks || {}).forEach(function (n) { if (!ctx.doc.blocks[n]) ctx.doc.blocks[n] = Model.clone(clip.blocks[n]); });
+    (clip.layers || []).forEach(function (l) { if (!Model.layerOf(ctx.doc, l.name)) ctx.doc.layers.push(Model.clone(l)); });
+    Model.touch();
+    var b = clip.base;
+    var p = yield { type: 'point', prompt: '붙여 넣을 곳 (복사한 것의 왼쪽 아래가 여기에)', preview: function (q) { return previewOf(clip.ents, M.move(q.x - b.x, q.y - b.y)); } };
+    cloneMove(clip.ents, M.move(p.x - b.x, p.y - b.y)).forEach(function (e) { e.id = 0; ctx.add(e); });
+    ctx.msg(clip.ents.length + '개를 붙여 넣었습니다.');
+  });
+
   // ---- 조회 ----
   def('DIST', '거리 재기', ['DI', '거리'], function* (ctx) {
     var a = yield { type: 'point', prompt: '첫 점' };
@@ -1140,6 +1228,6 @@
   NS.Commands = {
     defs: C, alias: ALIAS, parsePoint: parsePoint, evalNum: evalNum, ortho: ortho, offsetPts: offsetPts,
     polyAreaBulge: polyAreaBulge, trimEntity: trimEntity, interPts: interPts, gripsOf: gripsOf, applyGrip: applyGrip,
-    entLength: entLength, findBoundary: findBoundary, stretchEnt: stretchEnt, breakEntity: breakEntity, polySlice: polySlice
+    entLength: entLength, findBoundary: findBoundary, quantities: quantities, quantitiesCSV: quantitiesCSV, stretchEnt: stretchEnt, breakEntity: breakEntity, polySlice: polySlice
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

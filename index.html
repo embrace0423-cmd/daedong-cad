@@ -77,6 +77,7 @@
     <div class="grid">
       <button data-cmd="DIST">거리<kbd>DI</kbd></button>
       <button data-cmd="AREA">넓이<kbd>AA</kbd></button>
+      <button data-cmd="QTO">물량<kbd>QTO</kbd></button>
       <button data-cmd="SHEET">도곽<kbd></kbd></button>
       <button data-act="symbols">기호<kbd>I</kbd></button>
     </div>
@@ -111,6 +112,7 @@
     <button data-tog="snap" title="격자에 붙이기 (F9)">격자스냅</button>
     <button data-tog="ortho" title="가로·세로로만 (F8)">직교</button>
     <button data-tog="osnap" title="끝점·중심 등에 붙이기 (F3), 오른쪽 클릭으로 종류 고르기">객체스냅</button>
+    <button data-tog="lw" title="도면층·객체의 선 굵기를 화면에 보이기 (인쇄·PDF·PNG에는 언제나 반영)">굵기</button>
     <span class="grow"></span>
     <span class="info" id="info"></span>
   </div>
@@ -132,6 +134,15 @@
   </div>
 </dialog>
 
+<dialog id="dlg-qto">
+  <h2>물량 산출</h2>
+  <div id="qto-body"></div>
+  <div class="dlg-actions">
+    <button id="qto-csv">CSV 저장 (엑셀)</button>
+    <button data-close class="primary">닫기</button>
+  </div>
+</dialog>
+
 <dialog id="dlg-help">
   <h2>도움말</h2>
   <div class="help" id="help-body"></div>
@@ -145,6 +156,7 @@
 <script src="js/geom.js"></script>
 <script src="js/model.js"></script>
 <script src="js/hatch.js"></script>
+<script src="js/region.js"></script>
 <script src="js/dxf-write.js"></script>
 <script src="js/dxf-read.js"></script>
 <script src="js/svg.js"></script>

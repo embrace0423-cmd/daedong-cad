@@ -45,7 +45,7 @@
     function color(e, parent) {
       if (mono) return '#000';
       var c = Model.aciRgb(Model.entAci(e, doc, parent), false);
-      return c.toLowerCase() === '#ffff00' ? '#b8a000' : c; // 흰 종이에 노란색은 어둡게
+      return c; // 흰 종이용으로 밝은 색은 aciRgb에서 어둡게 바뀜
     }
     function dash(e, parent, unit) {
       var lt = doc.ltypes[Model.entLtype(e, doc, parent)];
@@ -61,7 +61,8 @@
       return '<text transform="translate(' + n(p.x) + ' ' + n(p.y) + ') rotate(' + n(G.deg(rot || 0)) + ') scale(1,-1)" font-size="' + n(h) + '" text-anchor="' + anchor + '" dominant-baseline="' + base + '" fill="' + fill + '" stroke="none">' + esc(s) + '</text>';
     }
     function ent(e, parent, unit, depth) {
-      var col = color(e, parent), st = ' stroke="' + col + '"' + dash(e, parent, unit) + (unit !== 1 ? ' stroke-width="' + n(sw / unit) + '"' : '');
+      var col = color(e, parent), lwk = Model.entLw(e, doc, parent) * k / unit;
+      var st = ' stroke="' + col + '"' + dash(e, parent, unit) + ' stroke-width="' + n(lwk) + '"';
       switch (e.type) {
         case 'line': return '<path d="M' + n(e.a.x) + ' ' + n(e.a.y) + 'L' + n(e.b.x) + ' ' + n(e.b.y) + '"' + st + '/>';
         case 'circle': return '<circle cx="' + n(e.c.x) + '" cy="' + n(e.c.y) + '" r="' + n(e.r) + '"' + st + '/>';
@@ -73,13 +74,13 @@
           if (e.solid) return '<path d="' + hpr.filter(function (q) { return q.hb; }).map(function (q) { return polyPath(q.pts, true); }).join('') + '" fill="' + col + '" fill-rule="evenodd" stroke="none"/>';
           var segs = hpr.filter(function (q) { return q.hp; });
           if (!segs.length) return '';
-          return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '"' + (unit !== 1 ? ' stroke-width="' + n(sw / unit) + '"' : '') + '/>';
+          return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '" stroke-width="' + n(lwk) + '"/>';
         }
         case 'point': return '<circle cx="' + n(e.p.x) + '" cy="' + n(e.p.y) + '" r="' + n(sw) + '" fill="' + col + '" stroke="none"/>';
         case 'text': return text(e.p, e.h, e.rot, e.s, e.align, e.valign, col);
         case 'mtext': return (Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).map(function (t) { return text(t.p, t.h, t.rot, t.s, t.align, t.valign, col); }).join('');
         case 'dim': {
-          var dg = Model.dimGeom(e, doc), s = '<path d="' + dg.lines.map(function (l) { return 'M' + n(l[0].x) + ' ' + n(l[0].y) + 'L' + n(l[1].x) + ' ' + n(l[1].y); }).join('') + '" stroke="' + col + '"/>';
+          var dg = Model.dimGeom(e, doc), s = '<path d="' + dg.lines.map(function (l) { return 'M' + n(l[0].x) + ' ' + n(l[0].y) + 'L' + n(l[1].x) + ' ' + n(l[1].y); }).join('') + '" stroke="' + col + '" stroke-width="' + n(lwk) + '"/>';
           dg.arrows.forEach(function (t) { s += '<path d="' + polyPath(t, true) + '" fill="' + col + '" stroke="none"/>'; });
           if (dg.text) s += text(dg.text.p, dg.text.h, dg.text.rot, dg.text.s, 'C', 'B', col);
           return s;

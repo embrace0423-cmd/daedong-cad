@@ -224,6 +224,44 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   ht = await page.evaluate(() => { const h = DCAD.App.doc.ents.find((e) => e.type === 'hatch' && e.loops.length === 2); const b = DCAD.Model.bounds(h, DCAD.App.doc); return b.x1; });
   check(Math.abs(ht - 6100) < 1e-6, '늘리기: 벽 해치 경계도 함께 (오른쪽 끝 ' + ht + ')');
 
+  // 1.2.0: 선으로만 그린 방 + 선 가구를 클릭 해치
+  await page.evaluate(() => DCAD.App.R.fit({ x0: 29000, y0: 4000, x1: 36000, y1: 9000 }));
+  await runAll(['L', '30000,5000', '@4000,0', '@0,3000', '@-4000,0', 'C']);
+  await runAll(['L', '31000,6000', '@1000,0', '@0,1000', '@-1000,0', 'C']);
+  await runAll(['H', 'P', '타일', 'S', '0.5']);
+  await clickWorld(30500, 5500);
+  await run('');
+  ht = await page.evaluate(() => { const h = DCAD.App.doc.ents.find((e) => e.type === 'hatch' && e.pat === 'TILE'); let a = 0; DCAD.Hatch.trapezoids(h).forEach((q) => { a += Math.abs(DCAD.G.polyArea(q)); }); return { loops: h.loops.length, m2: a / 1e6 }; });
+  check(ht.loops === 2 && Math.abs(ht.m2 - 11) < 1e-6, '선으로 그린 방 해치: 12㎡ − 가구 1㎡ = ' + ht.m2.toFixed(3) + '㎡ (경계 ' + ht.loops + '개)');
+  // 치수 끝: 리모델링 양식은 사선
+  check(await page.evaluate(() => { const d = DCAD.App.doc.ents.find((e) => e.type === 'dim' && e.kind === 'lin'); return DCAD.Model.dimGeom(d, DCAD.App.doc).arrows.length === 0; }), '리모델링 양식 치수 끝 = 사선(틱)');
+  // 선 굵기 보기 끄고 켜기
+  await page.click('[data-tog=lw]');
+  const lwOff = await page.evaluate(() => DCAD.App.R.showLw);
+  await page.click('[data-tog=lw]');
+  check(lwOff === false && (await page.evaluate(() => DCAD.App.R.showLw)) === true, '선 굵기 보기 끄고 켜기');
+  // 복사·붙여넣기
+  await page.evaluate(() => { const c = DCAD.App.doc.ents.filter((e) => e.type === 'circle' && Math.abs(e.r - 300) < 1e-9)[0]; DCAD.App.sel.clear(); DCAD.App.sel.add(c.id); });
+  await page.focus('#cv');
+  await page.keyboard.press('Control+c');
+  const nClip = await count();
+  await page.keyboard.press('Control+v');
+  await run('35000,6000');
+  ents = await page.evaluate(() => DCAD.App.doc.ents.slice(-1)[0]);
+  check((await count()) === nClip + 1 && ents.type === 'circle' && Math.abs(ents.c.x - 35300) < 1e-6 && Math.abs(ents.c.y - 6300) < 1e-6, 'Ctrl+C/V: 원 붙여넣기 (중심 ' + ents.c.x + ',' + ents.c.y + ')');
+  // 물량 산출 → CSV
+  await page.evaluate(() => DCAD.App.sel.clear());
+  await run('물량');
+  await page.waitForSelector('#dlg-qto[open]');
+  const qtoText = await page.innerText('#qto-body');
+  check(/여닫이문 900\s+DOOR_900\s+1/.test(qtoText) && /해치: 타일/.test(qtoText), '물량 산출: 문 1개, 해치 넓이 표시');
+  const [dq] = await Promise.all([page.waitForEvent('download'), page.click('#qto-csv')]);
+  const qPath = path.join(OUT, 'e2e-qto.csv');
+  await dq.saveAs(qPath);
+  const qcsv = fs.readFileSync(qPath, 'utf8');
+  check(dq.suggestedFilename().endsWith('-물량.csv') && qcsv.charCodeAt(0) === 0xfeff && /여닫이문 900,DOOR_900,1,개/.test(qcsv), '물량 CSV (엑셀용 BOM, 한글)');
+  await page.click('#dlg-qto [data-close]');
+
   // 인쇄 준비 (실제 인쇄창은 막음)
   await page.evaluate(() => { window.print = () => { window.__printed = true; }; });
   await page.click('[data-act=print]');

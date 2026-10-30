@@ -91,7 +91,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 #side .pane { flex: 1; overflow-y: auto; padding: 8px; display: none; }
 #side .pane.on { display: block; }
 
-.layer-row { display: grid; grid-template-columns: 18px 18px 1fr 22px 22px 86px; gap: 4px; align-items: center; padding: 3px 2px; border-radius: 4px; }
+.layer-row { display: grid; grid-template-columns: 18px 18px 1fr 20px 20px 70px 50px; gap: 4px; align-items: center; padding: 3px 2px; border-radius: 4px; }
 .layer-row.cur { background: rgba(79, 168, 255, 0.12); }
 .layer-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
 .layer-row select { font-size: 11px; padding: 1px 2px; }
@@ -152,6 +152,11 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .help-cols td:first-child { white-space: nowrap; }
 .help-cols kbd, .help kbd { font: 11px var(--mono); background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .help p { margin: 6px 0; }
+table.qto { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+table.qto th, table.qto td { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: left; }
+table.qto th { color: var(--muted); font-weight: 600; }
+table.qto td.num { text-align: right; font-family: var(--mono); }
+#dlg-qto { min-width: min(560px, 94vw); }
 
 .pop {
   position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
@@ -256,6 +261,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     <div class="grid">
       <button data-cmd="DIST">거리<kbd>DI</kbd></button>
       <button data-cmd="AREA">넓이<kbd>AA</kbd></button>
+      <button data-cmd="QTO">물량<kbd>QTO</kbd></button>
       <button data-cmd="SHEET">도곽<kbd></kbd></button>
       <button data-act="symbols">기호<kbd>I</kbd></button>
     </div>
@@ -290,6 +296,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     <button data-tog="snap" title="격자에 붙이기 (F9)">격자스냅</button>
     <button data-tog="ortho" title="가로·세로로만 (F8)">직교</button>
     <button data-tog="osnap" title="끝점·중심 등에 붙이기 (F3), 오른쪽 클릭으로 종류 고르기">객체스냅</button>
+    <button data-tog="lw" title="도면층·객체의 선 굵기를 화면에 보이기 (인쇄·PDF·PNG에는 언제나 반영)">굵기</button>
     <span class="grow"></span>
     <span class="info" id="info"></span>
   </div>
@@ -308,6 +315,15 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   <div class="dlg-actions">
     <button data-close>취소</button>
     <button class="primary" id="new-ok">만들기</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-qto">
+  <h2>물량 산출</h2>
+  <div id="qto-body"></div>
+  <div class="dlg-actions">
+    <button id="qto-csv">CSV 저장 (엑셀)</button>
+    <button data-close class="primary">닫기</button>
   </div>
 </dialog>
 
@@ -643,13 +659,25 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     for (var i = 0; i < doc.layers.length; i++) if (doc.layers[i].name === name) return doc.layers[i];
     return null;
   }
-  function ensureLayer(doc, name, color, ltype) {
+  function ensureLayer(doc, name, color, ltype, lw) {
     var l = layerOf(doc, name);
     if (!l) {
       l = { name: name, color: color || 7, ltype: ltype || 'CONTINUOUS', visible: true, locked: false };
+      if (lw) l.lw = lw;
       doc.layers.push(l);
     }
     return l;
+  }
+  // 선 굵기(종이 mm). 개체 lw가 없으면 도면층, 도면층도 없으면 0.25
+  var LWEIGHTS = [0.09, 0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0];
+  var LW_DEFAULT = 0.25;
+  function entLw(e, doc, parent) {
+    var w = e.lw;
+    if (w === 'BYBLOCK') return parent ? entLw(parent.e, doc, parent.parent) : LW_DEFAULT;
+    if (typeof w === 'number' && w > 0) return w;
+    if (e.layer === '0' && parent) return entLw(parent.e, doc, parent.parent);
+    var l = layerOf(doc, e.layer);
+    return l && l.lw > 0 ? l.lw : LW_DEFAULT;
   }
   function ensureLtype(doc, name, pat, desc) {
     if (!name || name === 'BYLAYER' || name === 'BYBLOCK') return;
@@ -727,6 +755,18 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     var d = G.norm(dir), n = G.perp(d), base = G.add(tip, G.mul(d, size));
     return [tip, G.add(base, G.mul(n, size / 6)), G.sub(base, G.mul(n, size / 6))];
   }
+  // 치수 끝 모양: arrow 화살표, tick 사선(건축), dot 점. dir은 끝에서 치수선 안쪽 방향
+  function endMark(out, tip, dir, ar, type) {
+    var d = G.norm(dir);
+    if (type === 'tick') {
+      var v = G.mul(G.rotate(d, G.v(0, 0), Math.PI / 4), ar * 0.5);
+      out.lines.push([G.sub(tip, v), G.add(tip, v)]);
+    } else if (type === 'dot') {
+      var pts = [];
+      for (var i = 0; i < 12; i++) pts.push(G.polar(tip, ar / 5, i * Math.PI / 6));
+      out.arrows.push(pts);
+    } else out.arrows.push(arrowTri(tip, d, ar));
+  }
   function dimGeom(e, doc) {
     var st = (doc && doc.settings && doc.settings.dim) || newDoc().settings.dim;
     var sz = e.st || st;
@@ -744,8 +784,11 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
         out.lines.push([G.add(pr[0], G.mul(dn, Math.min(sz.exo, l))), G.add(pr[1], G.mul(dn, sz.exe))]);
       });
       var dl = G.dist(d1, d2), dd = dl > 1e-9 ? G.norm(G.sub(d2, d1)) : u;
-      var inside = dl >= ar * 2.6;
-      if (inside) {
+      var inside = dl >= ar * 2.6, atype = sz.arrowType || st.arrowType || 'arrow';
+      if (atype !== 'arrow') {
+        out.lines.push([G.sub(d1, G.mul(dd, ar * 0.6)), G.add(d2, G.mul(dd, ar * 0.6))]);
+        endMark(out, d1, dd, ar, atype); endMark(out, d2, G.mul(dd, -1), ar, atype);
+      } else if (inside) {
         out.lines.push([d1, d2]);
         out.arrows.push(arrowTri(d1, dd, ar), arrowTri(d2, G.mul(dd, -1), ar));
       } else {
@@ -781,8 +824,9 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
         if (hi - lo > sz.exo) out.lines.push([G.polar(e.c, lo + (r0 < rr ? sz.exo : 0), pr[1]), G.polar(e.c, hi + (r0 < rr ? sz.exe : -sz.exo), pr[1])]);
       });
       var ta = G.polar(e.c, rr, s0), tb = G.polar(e.c, rr, s1);
-      out.arrows.push(arrowTri(ta, G.perp(G.v(Math.cos(s0), Math.sin(s0))), ar));
-      out.arrows.push(arrowTri(tb, G.mul(G.perp(G.v(Math.cos(s1), Math.sin(s1))), -1), ar));
+      var at2 = sz.arrowType || st.arrowType || 'arrow';
+      endMark(out, ta, G.perp(G.v(Math.cos(s0), Math.sin(s0))), ar, at2);
+      endMark(out, tb, G.mul(G.perp(G.v(Math.cos(s1), Math.sin(s1))), -1), ar, at2);
       var am = s0 + sw / 2, tr = readableRot(am - Math.PI / 2);
       out.text = { p: G.polar(e.c, rr + sz.gap, am), h: h, rot: tr, s: dimText(e, G.deg(sw), Math.max(0, dec)), align: 'C', valign: 'B' };
       out.value = G.deg(sw);
@@ -1212,9 +1256,12 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   function aciRgb(i, dark) {
     if (i === 7) return dark ? '#ffffff' : '#000000';
     var c = NS.ACI[i] === undefined ? 0xffffff : NS.ACI[i];
-    var hex = '#' + ('000000' + c.toString(16)).slice(-6);
     if (!dark && (c === 0xffffff)) return '#000000';
-    return hex;
+    if (!dark) { // 흰 바탕에서 노랑·연두·하늘색처럼 밝은 색은 어둡게
+      var r = c >> 16 & 255, gg = c >> 8 & 255, b = c & 255, lum = (0.2126 * r + 0.7152 * gg + 0.0722 * b) / 255;
+      if (lum > 0.7) { var k = 0.7 / lum; c = (Math.round(r * k) << 16) | (Math.round(gg * k) << 8) | Math.round(b * k); }
+    }
+    return '#' + ('000000' + c.toString(16)).slice(-6);
   }
   function entAci(e, doc, parent) {
     var c = e.color === undefined ? 256 : e.color;
@@ -1255,7 +1302,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     ellipsePoints: ellipsePoints, insertMatrix: insertMatrix, mapPrim: mapPrim, primsOf: primsOf, prims: prims,
     bounds: bounds, touch: touch, primDist: primDist, primNearest: primNearest, primInter: primInter,
     hitDist: hitDist, hitsBox: hitsBox, snapsOf: snapsOf, transform: transform, explode: explode,
-    aciRgb: aciRgb, entAci: entAci, entLtype: entLtype, extents: extents, readableRot: readableRot
+    aciRgb: aciRgb, entAci: entAci, entLtype: entLtype, entLw: entLw, LWEIGHTS: LWEIGHTS, LW_DEFAULT: LW_DEFAULT, extents: extents, readableRot: readableRot
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 </script>
@@ -1420,6 +1467,164 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   function loopArea(loop) { return Math.abs(G.polyArea(loopPoints(loop, 0))); }
 
   NS.Hatch = { PATTERNS: PATTERNS, families: families, loopPoints: loopPoints, polysOf: polysOf, segments: segments, trapezoids: trapezoids, loopOf: loopOf, loopArea: loopArea };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+<script>
+// ---- js/region.js ----
+// 선으로 둘러싼 영역 찾기 (해치 경계). 보이는 선·호·원·폴리선·블록 모양을 교점에서 나눠 평면 그래프를 만들고,
+// 클릭한 점을 둘러싼 가장 작은 면(반시계 순환)과 그 바로 안쪽 섬(다른 덩어리의 바깥 테두리)을 돌려준다.
+(function (g) {
+  'use strict';
+  var NS = g.DCAD = g.DCAD || {};
+  var G = NS.G, Model = NS.Model;
+
+  // 개체들 → 선분 목록 (호·원은 잘게 나눔)
+  function segmentsOf(ents, doc, tol) {
+    var segs = [];
+    function addPts(pts, closed) {
+      for (var i = 0; i + 1 < pts.length; i++) segs.push([pts[i], pts[i + 1]]);
+      if (closed && pts.length > 2) segs.push([pts[pts.length - 1], pts[0]]);
+    }
+    ents.forEach(function (e) {
+      if (e.type === 'hatch' || e.type === 'text' || e.type === 'mtext' || e.type === 'dim' || e.type === 'point') return;
+      Model.prims(e, doc).forEach(function (pr) {
+        if (pr.hp || pr.hb) return;
+        if (pr.k === 'L') segs.push([pr.a, pr.b]);
+        else if (pr.k === 'P') { if (!pr.fill) addPts(pr.pts, pr.closed); }
+        else if (pr.k === 'A') addPts(G.arcPoints(pr.c, pr.r, pr.a0, pr.a1, tol));
+        else if (pr.k === 'C') addPts(G.arcPoints(pr.c, pr.r, 0, 0, tol, true));
+      });
+    });
+    return segs.filter(function (s) { return G.dist(s[0], s[1]) > 1e-12; });
+  }
+
+  function find(ents, doc, p, opts) {
+    opts = opts || {};
+    var bx = G.box();
+    ents.forEach(function (e) { var b = Model.bounds(e, doc); if (G.boxValid(b)) bx = G.boxUnion(bx, b); });
+    if (!G.boxValid(bx)) return null;
+    var diag = Math.hypot(bx.x1 - bx.x0, bx.y1 - bx.y0) || 1;
+    var tol = opts.tol || diag / 20000, eps = Math.max(1e-7, diag * 1e-9);
+    var segs = segmentsOf(ents, doc, tol);
+    if (segs.length > (opts.limit || 40000)) return { tooMany: segs.length };
+    if (!segs.length) return null;
+
+    // 1) 격자로 후보 쌍을 줄여 교점 찾기
+    var cell = Math.max(diag / Math.max(8, Math.sqrt(segs.length) * 2), eps * 10), grid = new Map();
+    function key(i, j) { return i + ',' + j; }
+    segs.forEach(function (s, idx) {
+      var i0 = Math.floor(Math.min(s[0].x, s[1].x) / cell), i1 = Math.floor(Math.max(s[0].x, s[1].x) / cell);
+      var j0 = Math.floor(Math.min(s[0].y, s[1].y) / cell), j1 = Math.floor(Math.max(s[0].y, s[1].y) / cell);
+      for (var i = i0; i <= i1; i++) for (var j = j0; j <= j1; j++) { var k = key(i, j), l = grid.get(k); if (!l) grid.set(k, l = []); l.push(idx); }
+    });
+    var cuts = segs.map(function () { return [0, 1]; });
+    var seen = new Set();
+    grid.forEach(function (list) {
+      for (var a = 0; a < list.length; a++) for (var b = a + 1; b < list.length; b++) {
+        var i = list[a], j = list[b], pk = i < j ? i * 1e7 + j : j * 1e7 + i;
+        if (seen.has(pk)) continue;
+        seen.add(pk);
+        inter(segs[i], segs[j], cuts[i], cuts[j]);
+      }
+    });
+    function inter(s1, s2, c1, c2) {
+      var A = s1[0], B = s1[1], C = s2[0], D = s2[1];
+      var r = G.sub(B, A), s = G.sub(D, C), den = G.cross(r, s), lr = G.len(r), ls = G.len(s);
+      if (Math.abs(den) > 1e-12 * lr * ls) {
+        var q = G.sub(C, A), t = G.cross(q, s) / den, u = G.cross(q, r) / den, dt = eps / lr, du = eps / ls;
+        if (t >= -dt && t <= 1 + dt && u >= -du && u <= 1 + du) { c1.push(Math.max(0, Math.min(1, t))); c2.push(Math.max(0, Math.min(1, u))); }
+        return;
+      }
+      if (Math.abs(G.cross(G.sub(C, A), r)) > eps * lr) return; // 평행하지만 다른 줄
+      // 같은 줄 위에서 겹치면 서로의 끝점에서 나눈다
+      [C, D].forEach(function (P) { var t2 = G.dot(G.sub(P, A), r) / (lr * lr); if (t2 > 0 && t2 < 1) c1.push(t2); });
+      [A, B].forEach(function (P) { var u2 = G.dot(G.sub(P, C), s) / (ls * ls); if (u2 > 0 && u2 < 1) c2.push(u2); });
+    }
+
+    // 2) 꼭짓점 합치기와 변 만들기
+    var vxs = [], vgrid = new Map(), q = eps * 4;
+    function vid(P) {
+      var gi = Math.floor(P.x / q), gj = Math.floor(P.y / q);
+      for (var di = -1; di <= 1; di++) for (var dj = -1; dj <= 1; dj++) {
+        var l = vgrid.get(key(gi + di, gj + dj));
+        if (l) for (var k = 0; k < l.length; k++) if (G.dist(vxs[l[k]], P) <= q) return l[k];
+      }
+      var id = vxs.length; vxs.push({ x: P.x, y: P.y });
+      var kk = key(gi, gj), ll = vgrid.get(kk); if (!ll) vgrid.set(kk, ll = []); ll.push(id);
+      return id;
+    }
+    var adj = new Map(), edgeSet = new Set();
+    function link(a, b) {
+      if (a === b) return;
+      var ek = a < b ? a + '_' + b : b + '_' + a;
+      if (edgeSet.has(ek)) return;
+      edgeSet.add(ek);
+      if (!adj.has(a)) adj.set(a, new Set()); if (!adj.has(b)) adj.set(b, new Set());
+      adj.get(a).add(b); adj.get(b).add(a);
+    }
+    segs.forEach(function (s, i) {
+      var ts = cuts[i].sort(function (x, y) { return x - y; }), prev = null;
+      ts.forEach(function (t) { var id = vid(G.lerp(s[0], s[1], t)); if (prev !== null) link(prev, id); prev = id; });
+    });
+    // 3) 끝이 매달린 선 지우기
+    var changed = true;
+    while (changed) {
+      changed = false;
+      adj.forEach(function (ns, v) { if (ns.size <= 1) { ns.forEach(function (w) { adj.get(w).delete(v); }); adj.delete(v); changed = true; } });
+    }
+    if (!adj.size) return null;
+    // 4) 꼭짓점마다 이웃을 각도순으로, 반쪽 변마다 다음 변 = 들어온 곳에서 시계 방향으로 첫 이웃
+    var order = new Map();
+    adj.forEach(function (ns, v) {
+      var arr = Array.from(ns);
+      arr.sort(function (a, b) { return Math.atan2(vxs[a].y - vxs[v].y, vxs[a].x - vxs[v].x) - Math.atan2(vxs[b].y - vxs[v].y, vxs[b].x - vxs[v].x); });
+      order.set(v, arr);
+    });
+    var visited = new Set(), cycles = [];
+    adj.forEach(function (ns, u) {
+      ns.forEach(function (v) {
+        var hk = u + '>' + v;
+        if (visited.has(hk)) return;
+        var cyc = [], a = u, b = v, guard = 0;
+        while (guard++ < 200000) {
+          var k = a + '>' + b;
+          if (visited.has(k)) break;
+          visited.add(k); cyc.push(a);
+          var arr = order.get(b), idx = arr.indexOf(a), w = arr[(idx - 1 + arr.length) % arr.length];
+          a = b; b = w;
+        }
+        if (cyc.length >= 3) {
+          var pts = cyc.map(function (i) { return vxs[i]; });
+          cycles.push({ pts: pts, area: G.polyArea(pts), ids: cyc });
+        }
+      });
+    });
+    // 5) 점을 둘러싼 가장 작은 반시계 순환 = 바깥 경계
+    var outer = null;
+    cycles.forEach(function (c) {
+      if (c.area <= eps * eps) return;
+      c.box = G.box(); c.pts.forEach(function (P) { G.boxAdd(c.box, P); });
+      if (!G.boxHas(c.box, p) || !G.pointInPoly(p, c.pts)) return;
+      if (!outer || c.area < outer.area) outer = c;
+    });
+    if (!outer) return null;
+    // 6) 섬: 다른 덩어리의 바깥 테두리(시계 순환) 중 바깥 경계 안에 있고 점을 품지 않는 것, 그중 바로 안쪽만
+    var outerIds = new Set(outer.ids);
+    var islands = cycles.filter(function (c) {
+      if (c.area >= -eps * eps) return false;
+      if (c.ids.some(function (i) { return outerIds.has(i); })) return false;
+      if (!c.box) { c.box = G.box(); c.pts.forEach(function (P) { G.boxAdd(c.box, P); }); }
+      if (!G.boxInside(c.box, G.boxGrow(outer.box, eps))) return false;
+      return G.pointInPoly(c.pts[0], outer.pts) && !G.pointInPoly(p, c.pts);
+    });
+    islands = islands.filter(function (c) {
+      return !islands.some(function (o) { return o !== c && -o.area > -c.area && G.boxInside(c.box, G.boxGrow(o.box, eps)) && G.pointInPoly(c.pts[0], o.pts); });
+    });
+    var clean = function (pts) { return pts.map(function (P) { return { x: P.x, y: P.y }; }); };
+    return { loops: [clean(outer.pts)].concat(islands.map(function (c) { return clean(c.pts).reverse(); })), outerArea: outer.area };
+  }
+
+  NS.Region = { find: find, segmentsOf: segmentsOf };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 </script>
 <script>
@@ -1826,7 +2031,10 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
               var col = f(tags, 62, 7), flags = f(tags, 70, 0);
               var lt = (s(tags, 6, 'CONTINUOUS') || 'CONTINUOUS').toUpperCase();
               if (!Model.layerOf(doc, nm)) {
-                doc.layers.push({ name: nm, color: Math.abs(col) || 7, ltype: lt, visible: col >= 0 && !(flags & 1), locked: !!(flags & 4) });
+                var nl = { name: nm, color: Math.abs(col) || 7, ltype: lt, visible: col >= 0 && !(flags & 1), locked: !!(flags & 4) };
+                var lwl = f(tags, 370, -3);
+                if (lwl > 0) nl.lw = lwl / 100;
+                doc.layers.push(nl);
               }
             } else {
               var ln = decodeStr(s(tags, 2, '')).toUpperCase();
@@ -1886,6 +2094,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       if (lt) e.ltype = lt.toUpperCase();
       var c = f(tags, 62, 256);
       e.color = c < 0 ? Math.abs(c) : c;
+      var lwe = f(tags, 370, -1); // 1/100 mm, -1 도면층 따름, -2 블록 따름
+      if (lwe > 0) e.lw = lwe / 100; else if (lwe === -2) e.lw = 'BYBLOCK';
       if (!Model.layerOf(doc, e.layer)) Model.ensureLayer(doc, e.layer, 7);
       return e;
     }
@@ -2241,7 +2451,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     function color(e, parent) {
       if (mono) return '#000';
       var c = Model.aciRgb(Model.entAci(e, doc, parent), false);
-      return c.toLowerCase() === '#ffff00' ? '#b8a000' : c; // 흰 종이에 노란색은 어둡게
+      return c; // 흰 종이용으로 밝은 색은 aciRgb에서 어둡게 바뀜
     }
     function dash(e, parent, unit) {
       var lt = doc.ltypes[Model.entLtype(e, doc, parent)];
@@ -2257,7 +2467,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       return '<text transform="translate(' + n(p.x) + ' ' + n(p.y) + ') rotate(' + n(G.deg(rot || 0)) + ') scale(1,-1)" font-size="' + n(h) + '" text-anchor="' + anchor + '" dominant-baseline="' + base + '" fill="' + fill + '" stroke="none">' + esc(s) + '</text>';
     }
     function ent(e, parent, unit, depth) {
-      var col = color(e, parent), st = ' stroke="' + col + '"' + dash(e, parent, unit) + (unit !== 1 ? ' stroke-width="' + n(sw / unit) + '"' : '');
+      var col = color(e, parent), lwk = Model.entLw(e, doc, parent) * k / unit;
+      var st = ' stroke="' + col + '"' + dash(e, parent, unit) + ' stroke-width="' + n(lwk) + '"';
       switch (e.type) {
         case 'line': return '<path d="M' + n(e.a.x) + ' ' + n(e.a.y) + 'L' + n(e.b.x) + ' ' + n(e.b.y) + '"' + st + '/>';
         case 'circle': return '<circle cx="' + n(e.c.x) + '" cy="' + n(e.c.y) + '" r="' + n(e.r) + '"' + st + '/>';
@@ -2269,13 +2480,13 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
           if (e.solid) return '<path d="' + hpr.filter(function (q) { return q.hb; }).map(function (q) { return polyPath(q.pts, true); }).join('') + '" fill="' + col + '" fill-rule="evenodd" stroke="none"/>';
           var segs = hpr.filter(function (q) { return q.hp; });
           if (!segs.length) return '';
-          return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '"' + (unit !== 1 ? ' stroke-width="' + n(sw / unit) + '"' : '') + '/>';
+          return '<path d="' + segs.map(function (q) { return 'M' + n(q.a.x) + ' ' + n(q.a.y) + 'L' + n(q.b.x) + ' ' + n(q.b.y); }).join('') + '" stroke="' + col + '" stroke-width="' + n(lwk) + '"/>';
         }
         case 'point': return '<circle cx="' + n(e.p.x) + '" cy="' + n(e.p.y) + '" r="' + n(sw) + '" fill="' + col + '" stroke="none"/>';
         case 'text': return text(e.p, e.h, e.rot, e.s, e.align, e.valign, col);
         case 'mtext': return (Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).map(function (t) { return text(t.p, t.h, t.rot, t.s, t.align, t.valign, col); }).join('');
         case 'dim': {
-          var dg = Model.dimGeom(e, doc), s = '<path d="' + dg.lines.map(function (l) { return 'M' + n(l[0].x) + ' ' + n(l[0].y) + 'L' + n(l[1].x) + ' ' + n(l[1].y); }).join('') + '" stroke="' + col + '"/>';
+          var dg = Model.dimGeom(e, doc), s = '<path d="' + dg.lines.map(function (l) { return 'M' + n(l[0].x) + ' ' + n(l[0].y) + 'L' + n(l[1].x) + ' ' + n(l[1].y); }).join('') + '" stroke="' + col + '" stroke-width="' + n(lwk) + '"/>';
           dg.arrows.forEach(function (t) { s += '<path d="' + polyPath(t, true) + '" fill="' + col + '" stroke="none"/>'; });
           if (dg.text) s += text(dg.text.p, dg.text.h, dg.text.rot, dg.text.s, 'C', 'B', col);
           return s;
@@ -2451,26 +2662,31 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   }
 
   // ---- 도면 양식 ----
+  // [이름, 색, 선 종류, 선 굵기(종이 mm)]
   var LAYERSETS = {
     building: [
-      ['벽체', 7], ['기존벽', 8], ['철거', 1, 'DASHED'], ['신설벽', 5], ['문창', 4], ['가구', 3], ['위생설비', 6], ['전기', 30],
-      ['치수', 2], ['문자', 7], ['중심선', 1, 'CENTER'], ['표제란', 7]
+      ['벽체', 7, 'CONTINUOUS', 0.5], ['기존벽', 8, 'CONTINUOUS', 0.35], ['철거', 1, 'DASHED', 0.25], ['신설벽', 5, 'CONTINUOUS', 0.5],
+      ['문창', 4, 'CONTINUOUS', 0.25], ['가구', 3, 'CONTINUOUS', 0.18], ['위생설비', 6, 'CONTINUOUS', 0.18], ['전기', 30, 'CONTINUOUS', 0.18],
+      ['치수', 2, 'CONTINUOUS', 0.13], ['문자', 7, 'CONTINUOUS', 0.18], ['중심선', 1, 'CENTER', 0.13], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     furniture: [
-      ['벽체', 7], ['문창', 4], ['가구-거실', 3], ['가구-침실', 92], ['가구-주방', 40], ['가구-욕실', 140], ['가구-신규', 6],
-      ['치수', 2], ['문자', 7], ['중심선', 1, 'CENTER'], ['표제란', 7]
+      ['벽체', 7, 'CONTINUOUS', 0.5], ['문창', 4, 'CONTINUOUS', 0.25], ['가구-거실', 3, 'CONTINUOUS', 0.25], ['가구-침실', 92, 'CONTINUOUS', 0.25],
+      ['가구-주방', 40, 'CONTINUOUS', 0.25], ['가구-욕실', 140, 'CONTINUOUS', 0.25], ['가구-신규', 6, 'CONTINUOUS', 0.35],
+      ['치수', 2, 'CONTINUOUS', 0.13], ['문자', 7, 'CONTINUOUS', 0.18], ['중심선', 1, 'CENTER', 0.13], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     landscape: [
-      ['대지경계', 1, 'PHANTOM'], ['건물', 7], ['포장', 8], ['잔디', 3], ['수목-교목', 94], ['수목-관목', 62], ['수경', 5],
-      ['시설물', 6], ['치수', 2], ['문자', 7], ['표제란', 7]
+      ['대지경계', 1, 'PHANTOM', 0.5], ['건물', 7, 'CONTINUOUS', 0.5], ['포장', 8, 'CONTINUOUS', 0.18], ['잔디', 3, 'CONTINUOUS', 0.13],
+      ['수목-교목', 94, 'CONTINUOUS', 0.25], ['수목-관목', 62, 'CONTINUOUS', 0.18], ['수경', 5, 'CONTINUOUS', 0.25],
+      ['시설물', 6, 'CONTINUOUS', 0.25], ['치수', 2, 'CONTINUOUS', 0.13], ['문자', 7, 'CONTINUOUS', 0.18], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     machine: [
-      ['외형선', 7], ['숨은선', 3, 'HIDDEN'], ['중심선', 1, 'CENTER'], ['가상선', 6, 'PHANTOM'], ['단면', 8], ['치수', 4],
-      ['문자', 7], ['표제란', 7]
+      ['외형선', 7, 'CONTINUOUS', 0.5], ['숨은선', 3, 'HIDDEN', 0.25], ['중심선', 1, 'CENTER', 0.18], ['가상선', 6, 'PHANTOM', 0.18],
+      ['단면', 8, 'CONTINUOUS', 0.13], ['치수', 4, 'CONTINUOUS', 0.18], ['문자', 7, 'CONTINUOUS', 0.25], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     food: [
-      ['외형선', 7], ['숨은선', 3, 'HIDDEN'], ['중심선', 1, 'CENTER'], ['단열재', 8, 'DASHED'], ['배관-가스', 1, 'DASHDOT'],
-      ['배관-물·스팀', 5, 'DASHED'], ['전기', 30], ['치수', 4], ['문자', 7], ['표제란', 7]
+      ['외형선', 7, 'CONTINUOUS', 0.5], ['숨은선', 3, 'HIDDEN', 0.25], ['중심선', 1, 'CENTER', 0.18], ['단열재', 8, 'DASHED', 0.18],
+      ['배관-가스', 1, 'DASHDOT', 0.35], ['배관-물·스팀', 5, 'DASHED', 0.35], ['전기', 30, 'CONTINUOUS', 0.25], ['치수', 4, 'CONTINUOUS', 0.18],
+      ['문자', 7, 'CONTINUOUS', 0.25], ['표제란', 7, 'CONTINUOUS', 0.35]
     ]
   };
 
@@ -2491,7 +2707,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     st.scale = k;
     st.ltscale = k;
     st.textH = 3.5 * k;
-    st.dim = { textH: 2.5 * k, arrow: 2.5 * k, exo: 1 * k, exe: 1.25 * k, gap: 0.8 * k, dec: dec === undefined ? st.dim.dec : dec };
+    st.dim = { textH: 2.5 * k, arrow: 2.5 * k, exo: 1 * k, exe: 1.25 * k, gap: 0.8 * k, dec: dec === undefined ? st.dim.dec : dec, arrowType: (st.dim && st.dim.arrowType) || 'arrow' };
   }
 
   function newFromTemplate(id, opts) {
@@ -2506,7 +2722,9 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     doc.settings.sheet = opts.sheet !== undefined ? opts.sheet : t.sheet;
     doc.settings.grid = t.grid;
     applyScale(doc, k, t.dec);
-    if (t.layers) LAYERSETS[t.layers].forEach(function (l) { Model.ensureLayer(doc, l[0], l[1], l[2] || 'CONTINUOUS'); });
+    if (t.layers) LAYERSETS[t.layers].forEach(function (l) { Model.ensureLayer(doc, l[0], l[1], l[2] || 'CONTINUOUS', l[3]); });
+    // 건축·조경은 치수 끝을 사선(틱)으로, 기계는 화살표로
+    doc.settings.dim.arrowType = /^(remodel|furniture|landscape)$/.test(t.id) ? 'tick' : 'arrow';
     doc.currentLayer = Model.layerOf(doc, t.current) ? t.current : '0';
     if (doc.settings.sheet && opts.frame !== false) addSheet(doc, doc.settings.sheet, k, { title: opts.title || t.name, date: opts.date || '', company: opts.company || '' });
     Model.touch();
@@ -2571,6 +2789,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     this.ctx = canvas.getContext('2d');
     this.view = { cx: 0, cy: 0, scale: 1 };
     this.dark = true;
+    this.showLw = false; this.lwPx = 4; // 선 굵기 보이기, 종이 1mm당 화면 픽셀
     this.w = 0; this.h = 0; this.dpr = 1;
   }
   Renderer.prototype.resize = function () {
@@ -2666,7 +2885,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     var color = hi ? hi.color : Model.aciRgb(aci, this.dark);
     ctx.strokeStyle = color; ctx.fillStyle = color;
     ctx.globalAlpha = faded && !hi ? 0.55 : 1;
-    ctx.lineWidth = px * (hi ? hi.width : 1);
+    var lwW = this.showLw ? Math.max(1, Model.entLw(e, doc, parent) * this.lwPx) : 1;
+    ctx.lineWidth = px * (hi ? (hi.keepLtype ? lwW : Math.max(hi.width, lwW)) : lwW);
     var dash = null;
     if (!hi || hi.keepLtype) {
       var lt = Model.entLtype(e, doc, parent);
@@ -2886,6 +3106,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     var w = Math.max(1, Math.round((box.x1 - box.x0) * pxPerMm)), h = Math.max(1, Math.round((box.y1 - box.y0) * pxPerMm));
     canvas.width = w; canvas.height = h;
     r.w = w; r.h = h; r.dpr = 1; r.dark = false;
+    r.showLw = true; r.lwPx = pxPerMm * (doc.settings.scale || 1); // 종이 mm 굵기 그대로
     r.view = { cx: (box.x0 + box.x1) / 2, cy: (box.y0 + box.y1) / 2, scale: pxPerMm };
     var ctx = r.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
@@ -3772,10 +3993,36 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     for (var i = 0; i < keys.length; i++) if (keys[i] === up || NS.Hatch.PATTERNS[keys[i]].label.indexOf(v) === 0) return keys[i];
     return null;
   }
-  // 점을 둘러싼 가장 작은 닫힌 개체 + 그 안의 닫힌 개체(섬)
+  // 클릭한 점의 해치 경계: 먼저 선 그래프(화면에 보이는 객체)로 찾고, 닫힌 개체와 같은 고리는 정확한 곡선으로 바꾼다
   function findBoundary(ctx, p) {
+    // 도곽·표제란은 경계로 쓰지 않는다
+    var ents = ctx.visibleEnts().filter(function (e) { return e.layer !== '표제란'; });
+    var vb = ctx.viewBox ? ctx.viewBox() : null;
+    if (vb) ents = ents.filter(function (e) { var b = Model.bounds(e, ctx.doc); return G.boxValid(b) && G.boxHit(b, vb); });
+    var r = NS.Region ? NS.Region.find(ents, ctx.doc, p) : null;
+    if (r && r.tooMany) { ctx.msg('화면에 선이 너무 많아(' + r.tooMany + '개) 닫힌 객체로만 찾습니다. 확대해서 다시 해 보세요.'); return findBoundaryClosed(ctx, p); }
+    if (!r) return findBoundaryClosed(ctx, p);
+    var closed = [];
+    ents.forEach(function (e) {
+      if (!(e.type === 'poly' && e.closed) && e.type !== 'circle' && e.type !== 'ellipse') return;
+      var lp = NS.Hatch.loopOf(e);
+      if (lp) closed.push({ loop: lp, box: Model.bounds(e, ctx.doc), area: NS.Hatch.loopArea(lp) });
+    });
+    return r.loops.map(function (L) {
+      var b = G.box(); L.forEach(function (P) { G.boxAdd(b, P); });
+      var a = Math.abs(G.polyArea(L)), d = Math.hypot(b.x1 - b.x0, b.y1 - b.y0) / 500;
+      for (var i = 0; i < closed.length; i++) {
+        var c = closed[i];
+        if (Math.abs(c.box.x0 - b.x0) < d && Math.abs(c.box.x1 - b.x1) < d && Math.abs(c.box.y0 - b.y0) < d && Math.abs(c.box.y1 - b.y1) < d && Math.abs(c.area - a) < a * 0.03) return c.loop;
+      }
+      return L;
+    });
+  }
+  // 점을 둘러싼 가장 작은 닫힌 개체 + 그 안의 닫힌 개체(섬)
+  function findBoundaryClosed(ctx, p) {
     var cands = [];
     ctx.visibleEnts().forEach(function (e) {
+      if (e.layer === '표제란') return;
       if (!(e.type === 'poly' && e.closed) && e.type !== 'circle' && e.type !== 'ellipse') return;
       var loop = NS.Hatch.loopOf(e);
       if (!loop) return;
@@ -3824,7 +4071,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
         if (!loops.length) { ctx.msg('닫힌 폴리선·원·타원을 골라 주세요.'); continue; }
       } else {
         loops = findBoundary(ctx, p);
-        if (!loops) { ctx.msg('그 점을 둘러싼 닫힌 경계(닫힌 폴리선·원·타원)가 없습니다. 선으로 그린 테두리는 결합(J)으로 닫힌 폴리선을 만든 뒤 해 보세요.'); continue; }
+        if (!loops) { ctx.msg('그 점을 둘러싼 닫힌 경계를 찾지 못했습니다. 테두리 선이 서로 맞닿아 있는지(틈이 없는지) 보고, 테두리 전체가 화면에 보이게 한 뒤 다시 해 보세요.'); continue; }
       }
       var k = (ctx.doc.settings.scale || 1) * st.hatchScale, ang = G.rad(st.hatchAng), P = NS.Hatch.PATTERNS[st.hatchPat];
       var e = ctx.tmp('hatch', { loops: loops, solid: !!P.solid, pat: st.hatchPat, scale: k, ang: ang, fams: NS.Hatch.families(st.hatchPat, k, ang) });
@@ -3988,6 +4235,68 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     ctx.msg(res.length + '개로 나눴습니다.');
   });
 
+  // ---- 물량 산출 ----
+  // 블록 개수, 도면층별 길이, 닫힌 도형·해치 넓이
+  function quantities(ents, doc) {
+    var blocks = {}, lengths = {}, areas = {};
+    function addArea(key, layer, kind, a) {
+      var o = areas[key] || (areas[key] = { layer: layer, kind: kind, count: 0, m2: 0 });
+      o.count++; o.m2 += Math.abs(a) / 1e6;
+    }
+    ents.forEach(function (e) {
+      if (e.type === 'insert') {
+        var sym = NS.Library.symbolByName(e.name);
+        var b = blocks[e.name] || (blocks[e.name] = { name: e.name, label: sym ? sym.label : e.name, count: 0 });
+        b.count++;
+        return;
+      }
+      if (/^(line|arc|circle|poly|ellipse)$/.test(e.type)) {
+        lengths[e.layer] = (lengths[e.layer] || 0) + entLength(e, doc) / 1000;
+        if (e.type === 'poly' && e.closed) addArea(e.layer + '|닫힌 폴리선', e.layer, '닫힌 폴리선', polyAreaBulge(e.pts, true));
+        else if (e.type === 'circle') addArea(e.layer + '|원', e.layer, '원', Math.PI * e.r * e.r);
+        else if (e.type === 'ellipse' && G.sweep(e.t0 || 0, e.t1 === undefined ? TAU : e.t1) >= TAU - 1e-9) addArea(e.layer + '|타원', e.layer, '타원', Math.PI * G.len(e.major) * G.len(e.major) * e.ratio);
+      }
+      if (e.type === 'hatch') {
+        var a = 0;
+        NS.Hatch.trapezoids(e).forEach(function (q) { a += Math.abs(G.polyArea(q)); });
+        var lab = NS.Hatch.PATTERNS[e.pat] ? NS.Hatch.PATTERNS[e.pat].label : (e.pat || '해치');
+        addArea(e.layer + '|해치 ' + lab, e.layer, '해치: ' + lab, a);
+      }
+    });
+    var byCount = function (a, b) { return b.count - a.count || (a.label > b.label ? 1 : -1); };
+    return {
+      blocks: Object.keys(blocks).map(function (k) { return blocks[k]; }).sort(byCount),
+      lengths: Object.keys(lengths).map(function (k) { return { layer: k, m: lengths[k] }; }).sort(function (a, b) { return b.m - a.m; }),
+      areas: Object.keys(areas).map(function (k) { return areas[k]; }).sort(function (a, b) { return b.m2 - a.m2; })
+    };
+  }
+  function quantitiesCSV(q, title) {
+    var rows = [['구분', '도면층·이름', '내용', '수량', '단위']];
+    q.blocks.forEach(function (b) { rows.push(['개수', b.label, b.name, b.count, '개']); });
+    q.lengths.forEach(function (l) { rows.push(['길이', l.layer, '선·호·원·폴리선 합', G.fmt(l.m, 3), 'm']); });
+    q.areas.forEach(function (a) { rows.push(['넓이', a.layer, a.kind + ' ' + a.count + '개', G.fmt(a.m2, 3), 'm²']); rows.push(['넓이(평)', a.layer, a.kind, G.fmt(a.m2 / 3.305785, 2), '평']); });
+    var esc = function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return '﻿' + (title ? esc(title) + '\r\n' : '') + rows.map(function (r) { return r.map(esc).join(','); }).join('\r\n') + '\r\n';
+  }
+  def('QTO', '물량 산출', ['QTO', '물량'], function* (ctx) {
+    var sel = ctx.selectedEnts ? ctx.selectedEnts() : [];
+    var ents = sel.length ? sel : ctx.visibleEnts();
+    ctx.showQto(quantities(ents, ctx.doc), sel.length ? '고른 객체 ' + sel.length + '개' : '도면 전체 (보이는 도면층)');
+  });
+
+  // ---- 붙여넣기 (Ctrl+C로 복사한 것) ----
+  def('_PASTE', '붙여넣기', ['PASTE', '붙여넣기'], function* (ctx) {
+    var clip = ctx.clipboard();
+    if (!clip || !clip.ents || !clip.ents.length) { ctx.msg('복사한 것이 없습니다. 객체를 고르고 Ctrl+C 하세요.'); return; }
+    Object.keys(clip.blocks || {}).forEach(function (n) { if (!ctx.doc.blocks[n]) ctx.doc.blocks[n] = Model.clone(clip.blocks[n]); });
+    (clip.layers || []).forEach(function (l) { if (!Model.layerOf(ctx.doc, l.name)) ctx.doc.layers.push(Model.clone(l)); });
+    Model.touch();
+    var b = clip.base;
+    var p = yield { type: 'point', prompt: '붙여 넣을 곳 (복사한 것의 왼쪽 아래가 여기에)', preview: function (q) { return previewOf(clip.ents, M.move(q.x - b.x, q.y - b.y)); } };
+    cloneMove(clip.ents, M.move(p.x - b.x, p.y - b.y)).forEach(function (e) { e.id = 0; ctx.add(e); });
+    ctx.msg(clip.ents.length + '개를 붙여 넣었습니다.');
+  });
+
   // ---- 조회 ----
   def('DIST', '거리 재기', ['DI', '거리'], function* (ctx) {
     var a = yield { type: 'point', prompt: '첫 점' };
@@ -4046,7 +4355,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   NS.Commands = {
     defs: C, alias: ALIAS, parsePoint: parsePoint, evalNum: evalNum, ortho: ortho, offsetPts: offsetPts,
     polyAreaBulge: polyAreaBulge, trimEntity: trimEntity, interPts: interPts, gripsOf: gripsOf, applyGrip: applyGrip,
-    entLength: entLength, findBoundary: findBoundary, stretchEnt: stretchEnt, breakEntity: breakEntity, polySlice: polySlice
+    entLength: entLength, findBoundary: findBoundary, quantities: quantities, quantitiesCSV: quantitiesCSV, stretchEnt: stretchEnt, breakEntity: breakEntity, polySlice: polySlice
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 </script>
@@ -4059,14 +4368,14 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   var $ = function (s) { return document.querySelector(s); };
   var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
 
-  var AUTOSAVE = 'daedong-cad.autosave.v1', PREFS = 'daedong-cad.prefs.v1';
+  var AUTOSAVE = 'daedong-cad.autosave.v1', PREFS = 'daedong-cad.prefs.v1', CLIP = 'daedong-cad.clip.v1';
   function lsGet(k) { try { return g.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { g.localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 
   var App = {
     doc: null, R: null, sel: new Set(), hover: null,
     undo: [], redo: [], dirty: false,
-    tog: { grid: true, snap: false, ortho: false, osnap: true },
+    tog: { grid: true, snap: false, ortho: false, osnap: true, lw: true },
     osnapKinds: { end: true, mid: true, cen: true, qua: true, int: true, ins: true, per: true, nea: false },
     cursor: null, cursorWorld: null, snap: null,
     state: {}, lastCmd: null, history: [], histPos: -1
@@ -4185,7 +4494,14 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       return App.doc.ents.filter(function (e) { var l = Model.layerOf(App.doc, e.layer); return !l || l.visible; });
     },
     pickTol: function () { return 7 / App.R.view.scale; },
-    zoomExtents: function () { zoomExtents(); }
+    viewBox: function () { return App.R.viewBox(); },
+    zoomExtents: function () { zoomExtents(); },
+    selectedEnts: function () { var s = selectedEnts(); App.sel.clear(); return s; },
+    clipboard: function () {
+      if (App.clip) return App.clip;
+      try { return JSON.parse(lsGet(CLIP) || 'null'); } catch (e) { return null; }
+    },
+    showQto: function (q, scope) { showQto(q, scope); }
   };
 
   var Engine = {
@@ -4570,6 +4886,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       if (lk === 'y') { ev.preventDefault(); doRedo(); return; }
       if (lk === 's') { ev.preventDefault(); saveDXF(); return; }
       if (lk === 'o') { ev.preventDefault(); $('#file').click(); return; }
+      if (lk === 'c' && ev.target.id !== 'cmd' && !window.getSelection().toString()) { ev.preventDefault(); copySel(); return; }
+      if (lk === 'v' && ev.target.id !== 'cmd') { ev.preventDefault(); Engine.start('_PASTE'); return; }
       if (lk === 'a' && ev.target.id !== 'cmd') { ev.preventDefault(); pickableEnts().forEach(function (e) { App.sel.add(e.id); }); refreshProps(); redraw(); return; }
       return;
     }
@@ -4601,13 +4919,45 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 
   function toggle(name) {
     App.tog[name] = !App.tog[name];
+    if (name === 'lw') App.R.showLw = App.tog.lw;
     syncToggles();
-    msg({ grid: '격자', snap: '격자스냅', ortho: '직교', osnap: '객체스냅' }[name] + ' ' + (App.tog[name] ? '켬' : '끔'));
+    msg({ grid: '격자', snap: '격자스냅', ortho: '직교', osnap: '객체스냅', lw: '선 굵기 보기' }[name] + ' ' + (App.tog[name] ? '켬' : '끔'));
     savePrefs();
     redraw();
   }
   function syncToggles() { $$('#status button[data-tog]').forEach(function (b) { b.classList.toggle('on', !!App.tog[b.dataset.tog]); }); }
   function savePrefs() { lsSet(PREFS, JSON.stringify({ tog: App.tog, osnap: App.osnapKinds, dark: App.R.dark })); }
+  // 고른 객체 복사 (쓰는 블록·도면층 정의도 함께, 다른 도면에 붙여 넣을 수 있게 브라우저에도 남김)
+  function copySel() {
+    var list = selectedEnts();
+    if (!list.length) { msg('복사할 객체를 먼저 고르세요.'); return; }
+    var blocks = {}, layers = {}, b = G.box();
+    function needBlocks(ents) { ents.forEach(function (e) { if (e.type === 'insert' && App.doc.blocks[e.name] && !blocks[e.name]) { blocks[e.name] = App.doc.blocks[e.name]; needBlocks(App.doc.blocks[e.name].ents); } }); }
+    needBlocks(list);
+    list.forEach(function (e) { var l = Model.layerOf(App.doc, e.layer); if (l) layers[l.name] = l; var eb = Model.bounds(e, App.doc); if (G.boxValid(eb)) b = G.boxUnion(b, eb); });
+    App.clip = Model.clone({ ents: list, blocks: blocks, layers: Object.keys(layers).map(function (k) { return layers[k]; }), base: { x: b.x0, y: b.y0 } });
+    lsSet(CLIP, JSON.stringify(App.clip));
+    msg(list.length + '개를 복사했습니다. Ctrl+V로 붙여 넣습니다 (다른 도면에도 됩니다).', 'ok');
+  }
+  // 물량 산출 창
+  function showQto(q, scope) {
+    var dlg = $('#dlg-qto'), body = $('#qto-body');
+    body.textContent = '';
+    var p = document.createElement('p'); p.className = 'hint'; p.textContent = '범위: ' + scope + '. 숫자는 그린 도형 그대로 잰 값입니다(견적 전 현장 실측으로 확인).'; body.appendChild(p);
+    function table(title, head, rows) {
+      var h = document.createElement('h4'); h.textContent = title; body.appendChild(h);
+      if (!rows.length) { var e = document.createElement('p'); e.className = 'hint'; e.textContent = '없음'; body.appendChild(e); return; }
+      var t = document.createElement('table'); t.className = 'qto';
+      var tr = document.createElement('tr'); head.forEach(function (c) { var th = document.createElement('th'); th.textContent = c; tr.appendChild(th); }); t.appendChild(tr);
+      rows.forEach(function (r) { var row = document.createElement('tr'); r.forEach(function (c, i) { var td = document.createElement('td'); td.textContent = c; if (i >= head.length - 2) td.className = 'num'; row.appendChild(td); }); t.appendChild(row); });
+      body.appendChild(t);
+    }
+    table('개수 (블록·기호)', ['이름', '블록', '개수'], q.blocks.map(function (b) { return [b.label, b.name, String(b.count)]; }));
+    table('길이 (도면층별, 선·호·원·폴리선 합)', ['도면층', '길이 (m)'], q.lengths.map(function (l) { return [l.layer, G.fmt(l.m, 2)]; }));
+    table('넓이 (닫힌 도형·해치)', ['도면층', '종류', '넓이 (m²)', '평'], q.areas.map(function (a) { return [a.layer, a.kind + ' ' + a.count + '개', G.fmt(a.m2, 3), G.fmt(a.m2 / 3.305785, 2)]; }));
+    App.qto = { q: q, scope: scope };
+    dlg.showModal();
+  }
 
   // ---------- 패널: 도면층 ----------
   var tabNow = 'layers';
@@ -4641,7 +4991,10 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       lock.onclick = function () { l.locked = !l.locked; if (l.locked) selectedEnts().forEach(function (e) { if (e.layer === l.name) App.sel.delete(e.id); }); markChanged(); renderLayers(); redraw(); };
       var lt = ltypeSelect(l.ltype || 'CONTINUOUS', false);
       lt.onchange = function () { pushUndo(); l.ltype = lt.value; Model.ensureLtype(doc, lt.value); markChanged(); redraw(); };
-      [rb, sw, nm, eye, lock, lt].forEach(function (x) { row.appendChild(x); });
+      var lw = lwSelect(l.lw || Model.LW_DEFAULT, false);
+      lw.title = '선 굵기 (인쇄할 때 종이 mm)';
+      lw.onchange = function () { pushUndo(); l.lw = parseFloat(lw.value); markChanged(); redraw(); };
+      [rb, sw, nm, eye, lock, lt, lw].forEach(function (x) { row.appendChild(x); });
       pane.appendChild(row);
     });
     var act = document.createElement('div'); act.className = 'actions';
@@ -4667,6 +5020,15 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     var hint = document.createElement('p'); hint.className = 'hint';
     hint.textContent = '○ 현재 도면층 · 색 네모: 색 바꾸기 · ◉ 보이기 · 🔒 잠그기(잠긴 층은 고를 수 없음) · 이름을 두 번 클릭하면 이름 바꾸기';
     pane.appendChild(hint);
+  }
+  function lwSelect(cur, withBy) {
+    var s = document.createElement('select');
+    (withBy ? [['', '도면층 따름']] : []).concat(Model.LWEIGHTS.map(function (w) { return [String(w), G.fmt(w, 2)]; })).forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1];
+      if (String(cur) === o[0] || (!cur && o[0] === '')) op.selected = true;
+      s.appendChild(op);
+    });
+    return s;
   }
   function ltypeSelect(cur, withBy) {
     var s = document.createElement('select');
@@ -4758,6 +5120,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       field(pane, '치수 화살표', G.fmt(st.dim.arrow, 3), function (v) { if (v > 0) edit(function () { st.dim.arrow = v; }); });
       field(pane, '치수 소수', st.dim.dec, function (v) { edit(function () { st.dim.dec = Math.max(0, Math.min(6, Math.round(v))); }); });
       field(pane, '선 종류 축척', G.fmt(st.ltscale, 4), function (v) { if (v > 0) edit(function () { st.ltscale = v; }); });
+      field(pane, '치수 끝', st.dim.arrowType || 'arrow', function (v) { edit(function () { st.dim.arrowType = v; }); }, { options: [['arrow', '화살표 (기계)'], ['tick', '사선 (건축)'], ['dot', '점']] });
       field(pane, '개체 수', String(doc.ents.length), null, { readonly: true });
       field(pane, '블록 정의', String(Object.keys(doc.blocks).length), null, { readonly: true });
       var hint = document.createElement('p'); hint.className = 'hint';
@@ -4784,6 +5147,11 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     var ls = ltypeSelect(same('ltype') ? first.ltype || 'BYLAYER' : 'BYLAYER', true);
     ls.onchange = function () { edit(function () { Model.ensureLtype(doc, ls.value); list.forEach(function (e) { e.ltype = ls.value; }); }); };
     ltr.appendChild(ls); pane.appendChild(ltr);
+    var lwr = document.createElement('div'); lwr.className = 'prop';
+    var lwl = document.createElement('label'); lwl.textContent = '선 굵기'; lwr.appendChild(lwl);
+    var lws = lwSelect(same('lw') && typeof first.lw === 'number' ? first.lw : '', true);
+    lws.onchange = function () { edit(function () { list.forEach(function (e) { if (lws.value) e.lw = parseFloat(lws.value); else delete e.lw; }); }); };
+    lwr.appendChild(lws); pane.appendChild(lwr);
     if (list.length !== 1) return;
     var e = first, f = function (x) { return G.fmt(x, 3); };
     var setP = function (obj, key) { return function (v) { edit(function () { obj[key] = v; }); }; };
@@ -5046,7 +5414,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
         ['그리기', ['LINE', 'PLINE', 'RECT', 'CIRCLE', 'ARC', 'ELLIPSE', 'WALL', 'TEXT', 'HATCH', 'INSERT', 'BLOCK', 'SHEET']],
         ['치수', ['DIMLIN', 'DIMALI', 'DIMRAD', 'DIMDIA', 'DIMANG', 'EDITTEXT']],
         ['수정', ['MOVE', 'COPY', 'ROTATE', 'MIRROR', 'SCALE', 'STRETCH', 'OFFSET', 'TRIM', 'EXTEND', 'BREAK', 'FILLET', 'CHAMFER', 'ARRAY', 'ARRAYPOLAR', 'JOIN', 'EXPLODE', 'ERASE']],
-        ['재기·보기', ['DIST', 'AREA', 'ZOOMEXT']]
+        ['재기·보기', ['DIST', 'AREA', 'QTO', 'ZOOMEXT']]
       ];
       var html = '<div class="help-cols">';
       groups.forEach(function (gr) {
@@ -5059,7 +5427,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
       html += '<p><b>좌표</b> <kbd>1200,800</kbd> 절대 · <kbd>@3000,0</kbd> 앞 점에서 상대 · <kbd>@1500&lt;45</kbd> 거리와 각도 · 숫자만 치면 커서 방향으로 그 거리 (직교 F8과 같이 쓰면 편함). 식도 됩니다: <kbd>3000/2</kbd>, <kbd>900+200</kbd>.</p>';
       html += '<p><b>선택</b> 클릭으로 하나씩 더하기 · Shift+클릭 빼기 · 왼쪽→오른쪽 끌기 = 창 안에 다 든 것 · 오른쪽→왼쪽 끌기 = 걸친 것까지 · Ctrl+A 전체 · Delete 지우기. 선택한 객체의 파란 네모(그립)를 클릭하면 그 점을 옮깁니다.</p>';
       html += '<p><b>보기</b> 휠 = 확대·축소 · 휠 누르고 끌기(또는 스페이스+끌기) = 이동 · 휠 두 번 클릭 = 전체 보기.</p>';
-      html += '<p><b>단축키</b> <kbd>F3</kbd> 객체스냅 · <kbd>F7</kbd> 격자 · <kbd>F8</kbd> 직교 · <kbd>F9</kbd> 격자스냅 · <kbd>Ctrl+Z/Y</kbd> 되돌리기/다시 · <kbd>Ctrl+S</kbd> DXF 저장 · <kbd>Ctrl+O</kbd> 열기. 객체스냅 버튼을 오른쪽 클릭하면 끝점·중간점·교차점 등을 고릅니다.</p>';
+      html += '<p><b>단축키</b> <kbd>F3</kbd> 객체스냅 · <kbd>F7</kbd> 격자 · <kbd>F8</kbd> 직교 · <kbd>F9</kbd> 격자스냅 · <kbd>Ctrl+Z/Y</kbd> 되돌리기/다시 · <kbd>Ctrl+S</kbd> DXF 저장 · <kbd>Ctrl+O</kbd> 열기 · <kbd>Ctrl+C/V</kbd> 복사·붙여넣기(다른 도면에도). 객체스냅 버튼을 오른쪽 클릭하면 끝점·중간점·교차점 등을 고릅니다.</p>';
       html += '<p><b>파일</b> DXF(R12)는 오토캐드 등 대부분의 CAD에서 열립니다. 치수·타원·여러 줄 문자는 선·문자로 풀어서 저장하므로, 계속 고칠 원본은 <b>작업 파일 저장</b>(.dcad.json)으로 함께 보관하세요. 브라우저에도 자동 저장되지만 지워질 수 있습니다.</p>';
       html += '<p><b>넓이</b> AA 명령은 m²와 평(1평 = 3.305785 m²)으로 알려 줍니다.</p>';
       body.innerHTML = html;
@@ -5080,6 +5448,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     }
     document.body.classList.toggle('light', !App.R.dark);
     $('[data-act=theme]').textContent = App.R.dark ? '밝게' : '어둡게';
+    App.R.showLw = !!App.tog.lw;
     App.R.resize();
     g.addEventListener('resize', function () { App.R.resize(); redraw(); });
     if (g.ResizeObserver) new ResizeObserver(function () { App.R.resize(); redraw(); }).observe($('#stage'));
@@ -5132,6 +5501,11 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
     $$('#side .tabs button').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
     $$('dialog [data-close]').forEach(function (b) { b.addEventListener('click', function () { b.closest('dialog').close(); }); });
     $('#new-ok').addEventListener('click', createNew);
+    $('#qto-csv').addEventListener('click', function () {
+      if (!App.qto) return;
+      download(baseName() + '-물량.csv', Cmd.quantitiesCSV(App.qto.q, (App.doc.name || '도면') + ' 물량 (' + App.qto.scope + ')'), 'text/csv');
+      msg('물량표를 CSV로 저장했습니다 (엑셀에서 열림).', 'ok');
+    });
     $('#file').addEventListener('change', function () { var f = this.files[0]; if (f) openFile(f); this.value = ''; });
     // 끌어다 놓기
     var stage = $('#stage');
