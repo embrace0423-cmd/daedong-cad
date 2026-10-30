@@ -84,7 +84,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 #side .pane { flex: 1; overflow-y: auto; padding: 8px; display: none; }
 #side .pane.on { display: block; }
 
-.layer-row { display: grid; grid-template-columns: 18px 18px 1fr 22px 22px 86px; gap: 4px; align-items: center; padding: 3px 2px; border-radius: 4px; }
+.layer-row { display: grid; grid-template-columns: 18px 18px 1fr 20px 20px 70px 50px; gap: 4px; align-items: center; padding: 3px 2px; border-radius: 4px; }
 .layer-row.cur { background: rgba(79, 168, 255, 0.12); }
 .layer-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
 .layer-row select { font-size: 11px; padding: 1px 2px; }
@@ -145,6 +145,11 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .help-cols td:first-child { white-space: nowrap; }
 .help-cols kbd, .help kbd { font: 11px var(--mono); background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .help p { margin: 6px 0; }
+table.qto { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+table.qto th, table.qto td { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: left; }
+table.qto th { color: var(--muted); font-weight: 600; }
+table.qto td.num { text-align: right; font-family: var(--mono); }
+#dlg-qto { min-width: min(560px, 94vw); }
 
 .pop {
   position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px;

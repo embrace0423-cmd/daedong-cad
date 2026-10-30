@@ -37,13 +37,25 @@
     for (var i = 0; i < doc.layers.length; i++) if (doc.layers[i].name === name) return doc.layers[i];
     return null;
   }
-  function ensureLayer(doc, name, color, ltype) {
+  function ensureLayer(doc, name, color, ltype, lw) {
     var l = layerOf(doc, name);
     if (!l) {
       l = { name: name, color: color || 7, ltype: ltype || 'CONTINUOUS', visible: true, locked: false };
+      if (lw) l.lw = lw;
       doc.layers.push(l);
     }
     return l;
+  }
+  // 선 굵기(종이 mm). 개체 lw가 없으면 도면층, 도면층도 없으면 0.25
+  var LWEIGHTS = [0.09, 0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0];
+  var LW_DEFAULT = 0.25;
+  function entLw(e, doc, parent) {
+    var w = e.lw;
+    if (w === 'BYBLOCK') return parent ? entLw(parent.e, doc, parent.parent) : LW_DEFAULT;
+    if (typeof w === 'number' && w > 0) return w;
+    if (e.layer === '0' && parent) return entLw(parent.e, doc, parent.parent);
+    var l = layerOf(doc, e.layer);
+    return l && l.lw > 0 ? l.lw : LW_DEFAULT;
   }
   function ensureLtype(doc, name, pat, desc) {
     if (!name || name === 'BYLAYER' || name === 'BYBLOCK') return;
@@ -121,6 +133,18 @@
     var d = G.norm(dir), n = G.perp(d), base = G.add(tip, G.mul(d, size));
     return [tip, G.add(base, G.mul(n, size / 6)), G.sub(base, G.mul(n, size / 6))];
   }
+  // 치수 끝 모양: arrow 화살표, tick 사선(건축), dot 점. dir은 끝에서 치수선 안쪽 방향
+  function endMark(out, tip, dir, ar, type) {
+    var d = G.norm(dir);
+    if (type === 'tick') {
+      var v = G.mul(G.rotate(d, G.v(0, 0), Math.PI / 4), ar * 0.5);
+      out.lines.push([G.sub(tip, v), G.add(tip, v)]);
+    } else if (type === 'dot') {
+      var pts = [];
+      for (var i = 0; i < 12; i++) pts.push(G.polar(tip, ar / 5, i * Math.PI / 6));
+      out.arrows.push(pts);
+    } else out.arrows.push(arrowTri(tip, d, ar));
+  }
   function dimGeom(e, doc) {
     var st = (doc && doc.settings && doc.settings.dim) || newDoc().settings.dim;
     var sz = e.st || st;
@@ -138,8 +162,11 @@
         out.lines.push([G.add(pr[0], G.mul(dn, Math.min(sz.exo, l))), G.add(pr[1], G.mul(dn, sz.exe))]);
       });
       var dl = G.dist(d1, d2), dd = dl > 1e-9 ? G.norm(G.sub(d2, d1)) : u;
-      var inside = dl >= ar * 2.6;
-      if (inside) {
+      var inside = dl >= ar * 2.6, atype = sz.arrowType || st.arrowType || 'arrow';
+      if (atype !== 'arrow') {
+        out.lines.push([G.sub(d1, G.mul(dd, ar * 0.6)), G.add(d2, G.mul(dd, ar * 0.6))]);
+        endMark(out, d1, dd, ar, atype); endMark(out, d2, G.mul(dd, -1), ar, atype);
+      } else if (inside) {
         out.lines.push([d1, d2]);
         out.arrows.push(arrowTri(d1, dd, ar), arrowTri(d2, G.mul(dd, -1), ar));
       } else {
@@ -175,8 +202,9 @@
         if (hi - lo > sz.exo) out.lines.push([G.polar(e.c, lo + (r0 < rr ? sz.exo : 0), pr[1]), G.polar(e.c, hi + (r0 < rr ? sz.exe : -sz.exo), pr[1])]);
       });
       var ta = G.polar(e.c, rr, s0), tb = G.polar(e.c, rr, s1);
-      out.arrows.push(arrowTri(ta, G.perp(G.v(Math.cos(s0), Math.sin(s0))), ar));
-      out.arrows.push(arrowTri(tb, G.mul(G.perp(G.v(Math.cos(s1), Math.sin(s1))), -1), ar));
+      var at2 = sz.arrowType || st.arrowType || 'arrow';
+      endMark(out, ta, G.perp(G.v(Math.cos(s0), Math.sin(s0))), ar, at2);
+      endMark(out, tb, G.mul(G.perp(G.v(Math.cos(s1), Math.sin(s1))), -1), ar, at2);
       var am = s0 + sw / 2, tr = readableRot(am - Math.PI / 2);
       out.text = { p: G.polar(e.c, rr + sz.gap, am), h: h, rot: tr, s: dimText(e, G.deg(sw), Math.max(0, dec)), align: 'C', valign: 'B' };
       out.value = G.deg(sw);
@@ -606,9 +634,12 @@
   function aciRgb(i, dark) {
     if (i === 7) return dark ? '#ffffff' : '#000000';
     var c = NS.ACI[i] === undefined ? 0xffffff : NS.ACI[i];
-    var hex = '#' + ('000000' + c.toString(16)).slice(-6);
     if (!dark && (c === 0xffffff)) return '#000000';
-    return hex;
+    if (!dark) { // 흰 바탕에서 노랑·연두·하늘색처럼 밝은 색은 어둡게
+      var r = c >> 16 & 255, gg = c >> 8 & 255, b = c & 255, lum = (0.2126 * r + 0.7152 * gg + 0.0722 * b) / 255;
+      if (lum > 0.7) { var k = 0.7 / lum; c = (Math.round(r * k) << 16) | (Math.round(gg * k) << 8) | Math.round(b * k); }
+    }
+    return '#' + ('000000' + c.toString(16)).slice(-6);
   }
   function entAci(e, doc, parent) {
     var c = e.color === undefined ? 256 : e.color;
@@ -649,6 +680,6 @@
     ellipsePoints: ellipsePoints, insertMatrix: insertMatrix, mapPrim: mapPrim, primsOf: primsOf, prims: prims,
     bounds: bounds, touch: touch, primDist: primDist, primNearest: primNearest, primInter: primInter,
     hitDist: hitDist, hitsBox: hitsBox, snapsOf: snapsOf, transform: transform, explode: explode,
-    aciRgb: aciRgb, entAci: entAci, entLtype: entLtype, extents: extents, readableRot: readableRot
+    aciRgb: aciRgb, entAci: entAci, entLtype: entLtype, entLw: entLw, LWEIGHTS: LWEIGHTS, LW_DEFAULT: LW_DEFAULT, extents: extents, readableRot: readableRot
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

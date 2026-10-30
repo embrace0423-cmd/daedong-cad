@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-['aci', 'geom', 'model', 'hatch', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
+['aci', 'geom', 'model', 'hatch', 'region', 'dxf-write', 'dxf-read', 'svg', 'library', 'commands'].forEach((f) => require(path.join(__dirname, '..', 'js', f + '.js')));
 const D = globalThis.DCAD;
 const { G, Model, Commands: Cmd, Library: Lib, DXF } = D;
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≉ ${b}`);
@@ -267,4 +267,61 @@ test('간격띄우기: 호 구간 폴리선(경기장 모양)', () => {
   const inn = Cmd.offsetPts(st, 10, true);
   near(Math.abs(Cmd.polyAreaBulge(inn, true)), 100 * 40 + Math.PI * 400, 1e-6);
   assert.equal(Cmd.offsetPts(st, 35, true), null, '반지름보다 안쪽은 불가');
+});
+
+test('해치 경계를 선으로 찾기: 도곽 안의 선으로 그린 방, 선 가구·원 섬, 호 모서리', () => {
+  const doc = Lib.newFromTemplate('remodel'); // 도곽(닫힌 폴리선)이 있어도 방을 찾아야 함
+  const add = (t, p) => { const e = Model.mk(doc, t, p); doc.ents.push(e); return e; };
+  const box4 = (x0, y0, x1, y1) => { add('line', { a: { x: x0, y: y0 }, b: { x: x1, y: y0 } }); add('line', { a: { x: x1, y: y0 }, b: { x: x1, y: y1 } }); add('line', { a: { x: x1, y: y1 }, b: { x: x0, y: y1 } }); add('line', { a: { x: x0, y: y1 }, b: { x: x0, y: y0 } }); };
+  box4(2000, 2000, 6000, 5000);
+  add('line', { a: { x: 1500, y: 3500 }, b: { x: 2500, y: 3500 } }); // 벽을 뚫은 매달린 선
+  box4(3000, 3000, 4000, 4000);
+  add('circle', { c: { x: 5000, y: 4000 }, r: 300 });
+  add('line', { a: { x: 7000, y: 2000 }, b: { x: 9500, y: 2000 } });
+  add('arc', { c: { x: 9500, y: 2500 }, r: 500, a0: -Math.PI / 2, a1: 0 });
+  add('line', { a: { x: 10000, y: 2500 }, b: { x: 10000, y: 5000 } });
+  add('line', { a: { x: 10000, y: 5000 }, b: { x: 7000, y: 5000 } });
+  add('line', { a: { x: 7000, y: 5000 }, b: { x: 7000, y: 2000 } });
+  Model.touch();
+  const ctx = { doc, visibleEnts: () => doc.ents, msg: () => {} };
+  const loops = Cmd.findBoundary(ctx, { x: 2500, y: 2500 });
+  const areas = loops.map((l) => Math.abs(Cmd.polyAreaBulge(l, true)) / 1e6);
+  near(areas[0], 12, 1e-9); near(areas[1], 1, 1e-9); near(areas[2], Math.PI * 0.09, 1e-9);
+  assert.ok(loops[2].some((p) => p.bulge), '원 섬은 정확한 곡선으로');
+  const r2 = Cmd.findBoundary(ctx, { x: 8000, y: 3000 });
+  near(Math.abs(Cmd.polyAreaBulge(r2[0], true)) / 1e6, (9e6 - 25e4 + Math.PI * 25e4 / 4) / 1e6, 2e-3);
+});
+
+test('선 굵기: 개체 → 도면층 → 기본, 블록 안 0층은 블록을 따름', () => {
+  const doc = Lib.newFromTemplate('remodel');
+  const w = Model.mk(doc, 'line', { a: { x: 0, y: 0 }, b: { x: 1, y: 0 } }); w.layer = '벽체';
+  near(Model.entLw(w, doc), 0.5);
+  w.lw = 0.13; near(Model.entLw(w, doc), 0.13);
+  const z = Model.mk(null, 'line', { a: { x: 0, y: 0 }, b: { x: 1, y: 0 } }); z.layer = '0';
+  const ins = Model.mk(doc, 'insert', { name: 'X', p: { x: 0, y: 0 } }); ins.layer = '치수';
+  near(Model.entLw(z, doc, { e: ins }), 0.13);
+  near(Model.entLw(Model.mk(Model.newDoc(), 'line', {}), Model.newDoc()), 0.25);
+});
+
+test('치수 끝: 건축 양식은 사선, 기계 양식은 화살표', () => {
+  const a = Lib.newFromTemplate('remodel'), m = Lib.newFromTemplate('machine');
+  const d = (doc) => Model.dimGeom(Model.mk(doc, 'dim', { kind: 'lin', p1: { x: 0, y: 0 }, p2: { x: 3000, y: 0 }, loc: { x: 0, y: -500 }, ang: 0 }), doc);
+  const ga = d(a), gm = d(m);
+  assert.equal(ga.arrows.length, 0); assert.equal(ga.lines.length, 5); near(ga.value, 3000);
+  assert.equal(gm.arrows.length, 2);
+});
+
+test('물량 산출: 기호 개수, 도면층별 길이, 넓이(평)', () => {
+  const doc = Lib.newFromTemplate('furniture', { frame: false });
+  const add = (t, p, layer) => { const e = Model.mk(doc, t, p); e.layer = layer; doc.ents.push(e); return e; };
+  ['BED_QUEEN', 'BED_QUEEN', 'SOFA_3'].forEach((n, i) => { Lib.ensureBlock(doc, n); add('insert', { name: n, p: { x: i * 3000, y: 0 } }, '가구-침실'); });
+  add('line', { a: { x: 0, y: 0 }, b: { x: 3000, y: 0 } }, '벽체');
+  add('poly', { pts: [{ x: 0, y: 0 }, { x: 3305.785, y: 0 }, { x: 3305.785, y: 1000 }, { x: 0, y: 1000 }], closed: true }, '벽체');
+  const q = Cmd.quantities(doc.ents, doc);
+  assert.deepEqual(q.blocks.map((b) => [b.label, b.count]), [['침대 퀸', 2], ['소파 3인', 1]]);
+  near(q.lengths.find((l) => l.layer === '벽체').m, 3 + 2 * (3.305785 + 1));
+  const a = q.areas.find((x) => x.kind === '닫힌 폴리선');
+  near(a.m2, 3.305785); near(a.m2 / 3.305785, 1);
+  const csv = Cmd.quantitiesCSV(q, '시험');
+  assert.ok(csv.charCodeAt(0) === 0xfeff && /침대 퀸,BED_QUEEN,2,개/.test(csv));
 });

@@ -144,26 +144,31 @@
   }
 
   // ---- 도면 양식 ----
+  // [이름, 색, 선 종류, 선 굵기(종이 mm)]
   var LAYERSETS = {
     building: [
-      ['벽체', 7], ['기존벽', 8], ['철거', 1, 'DASHED'], ['신설벽', 5], ['문창', 4], ['가구', 3], ['위생설비', 6], ['전기', 30],
-      ['치수', 2], ['문자', 7], ['중심선', 1, 'CENTER'], ['표제란', 7]
+      ['벽체', 7, 'CONTINUOUS', 0.5], ['기존벽', 8, 'CONTINUOUS', 0.35], ['철거', 1, 'DASHED', 0.25], ['신설벽', 5, 'CONTINUOUS', 0.5],
+      ['문창', 4, 'CONTINUOUS', 0.25], ['가구', 3, 'CONTINUOUS', 0.18], ['위생설비', 6, 'CONTINUOUS', 0.18], ['전기', 30, 'CONTINUOUS', 0.18],
+      ['치수', 2, 'CONTINUOUS', 0.13], ['문자', 7, 'CONTINUOUS', 0.18], ['중심선', 1, 'CENTER', 0.13], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     furniture: [
-      ['벽체', 7], ['문창', 4], ['가구-거실', 3], ['가구-침실', 92], ['가구-주방', 40], ['가구-욕실', 140], ['가구-신규', 6],
-      ['치수', 2], ['문자', 7], ['중심선', 1, 'CENTER'], ['표제란', 7]
+      ['벽체', 7, 'CONTINUOUS', 0.5], ['문창', 4, 'CONTINUOUS', 0.25], ['가구-거실', 3, 'CONTINUOUS', 0.25], ['가구-침실', 92, 'CONTINUOUS', 0.25],
+      ['가구-주방', 40, 'CONTINUOUS', 0.25], ['가구-욕실', 140, 'CONTINUOUS', 0.25], ['가구-신규', 6, 'CONTINUOUS', 0.35],
+      ['치수', 2, 'CONTINUOUS', 0.13], ['문자', 7, 'CONTINUOUS', 0.18], ['중심선', 1, 'CENTER', 0.13], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     landscape: [
-      ['대지경계', 1, 'PHANTOM'], ['건물', 7], ['포장', 8], ['잔디', 3], ['수목-교목', 94], ['수목-관목', 62], ['수경', 5],
-      ['시설물', 6], ['치수', 2], ['문자', 7], ['표제란', 7]
+      ['대지경계', 1, 'PHANTOM', 0.5], ['건물', 7, 'CONTINUOUS', 0.5], ['포장', 8, 'CONTINUOUS', 0.18], ['잔디', 3, 'CONTINUOUS', 0.13],
+      ['수목-교목', 94, 'CONTINUOUS', 0.25], ['수목-관목', 62, 'CONTINUOUS', 0.18], ['수경', 5, 'CONTINUOUS', 0.25],
+      ['시설물', 6, 'CONTINUOUS', 0.25], ['치수', 2, 'CONTINUOUS', 0.13], ['문자', 7, 'CONTINUOUS', 0.18], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     machine: [
-      ['외형선', 7], ['숨은선', 3, 'HIDDEN'], ['중심선', 1, 'CENTER'], ['가상선', 6, 'PHANTOM'], ['단면', 8], ['치수', 4],
-      ['문자', 7], ['표제란', 7]
+      ['외형선', 7, 'CONTINUOUS', 0.5], ['숨은선', 3, 'HIDDEN', 0.25], ['중심선', 1, 'CENTER', 0.18], ['가상선', 6, 'PHANTOM', 0.18],
+      ['단면', 8, 'CONTINUOUS', 0.13], ['치수', 4, 'CONTINUOUS', 0.18], ['문자', 7, 'CONTINUOUS', 0.25], ['표제란', 7, 'CONTINUOUS', 0.35]
     ],
     food: [
-      ['외형선', 7], ['숨은선', 3, 'HIDDEN'], ['중심선', 1, 'CENTER'], ['단열재', 8, 'DASHED'], ['배관-가스', 1, 'DASHDOT'],
-      ['배관-물·스팀', 5, 'DASHED'], ['전기', 30], ['치수', 4], ['문자', 7], ['표제란', 7]
+      ['외형선', 7, 'CONTINUOUS', 0.5], ['숨은선', 3, 'HIDDEN', 0.25], ['중심선', 1, 'CENTER', 0.18], ['단열재', 8, 'DASHED', 0.18],
+      ['배관-가스', 1, 'DASHDOT', 0.35], ['배관-물·스팀', 5, 'DASHED', 0.35], ['전기', 30, 'CONTINUOUS', 0.25], ['치수', 4, 'CONTINUOUS', 0.18],
+      ['문자', 7, 'CONTINUOUS', 0.25], ['표제란', 7, 'CONTINUOUS', 0.35]
     ]
   };
 
@@ -184,7 +189,7 @@
     st.scale = k;
     st.ltscale = k;
     st.textH = 3.5 * k;
-    st.dim = { textH: 2.5 * k, arrow: 2.5 * k, exo: 1 * k, exe: 1.25 * k, gap: 0.8 * k, dec: dec === undefined ? st.dim.dec : dec };
+    st.dim = { textH: 2.5 * k, arrow: 2.5 * k, exo: 1 * k, exe: 1.25 * k, gap: 0.8 * k, dec: dec === undefined ? st.dim.dec : dec, arrowType: (st.dim && st.dim.arrowType) || 'arrow' };
   }
 
   function newFromTemplate(id, opts) {
@@ -199,7 +204,9 @@
     doc.settings.sheet = opts.sheet !== undefined ? opts.sheet : t.sheet;
     doc.settings.grid = t.grid;
     applyScale(doc, k, t.dec);
-    if (t.layers) LAYERSETS[t.layers].forEach(function (l) { Model.ensureLayer(doc, l[0], l[1], l[2] || 'CONTINUOUS'); });
+    if (t.layers) LAYERSETS[t.layers].forEach(function (l) { Model.ensureLayer(doc, l[0], l[1], l[2] || 'CONTINUOUS', l[3]); });
+    // 건축·조경은 치수 끝을 사선(틱)으로, 기계는 화살표로
+    doc.settings.dim.arrowType = /^(remodel|furniture|landscape)$/.test(t.id) ? 'tick' : 'arrow';
     doc.currentLayer = Model.layerOf(doc, t.current) ? t.current : '0';
     if (doc.settings.sheet && opts.frame !== false) addSheet(doc, doc.settings.sheet, k, { title: opts.title || t.name, date: opts.date || '', company: opts.company || '' });
     Model.touch();
