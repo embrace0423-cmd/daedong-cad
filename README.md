@@ -7,6 +7,8 @@
 - 브라우저로 쓰는 파일: [`dist/daedong-cad.html`](dist/daedong-cad.html) 한 파일입니다. PC에 저장하고 두 번 클릭하면 열립니다.
 - 예시 도면: [`docs/sample-remodel.dxf`](docs/sample-remodel.dxf)(DXF), [`docs/sample-remodel.dcad.json`](docs/sample-remodel.dcad.json)(작업 파일)
 
+- 저장소: 2026-10-31 대동 파트너십 저장소(`desktop-tutorial`)의 `tools/daedong-cad/`에서 커밋 이력과 함께 이 별도 저장소로 옮겼습니다. 앞으로는 이 저장소에서 고칩니다.
+
 ![대동 CAD 화면: 리모델링 평면도 예시](docs/screenshot.png)
 
 ## 1. 어떻게 만들었나 (중요)
