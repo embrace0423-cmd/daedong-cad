@@ -97,6 +97,7 @@
   3. 도면층 '밑그림'에 들어갑니다. 따라 그릴 때 이 층을 잠그면 실수로 고르지 않고, 다 그리면 끄면 됩니다.
   - [속성]에서 진하기(%), 폭, '인쇄·PDF에 넣기'를 바꿉니다. 기본은 화면에만 보이고 인쇄·PDF·PNG·SVG에는 나오지 않습니다(DXF에는 언제나 빠짐).
   - 그림은 작업 파일(`.dcad.json`)에 함께 저장됩니다. 긴 변이 2400픽셀을 넘는 큰 사진은 넣을 때 줄여서 저장합니다.
+  - 시험용 그림: [`docs/test-floorplan.png`](docs/test-floorplan.png) (가상 3베이 평면도, 2400×2400픽셀, 실제 단지 도면 아님). 위쪽 전체 치수 10,800의 양 끝(사선)을 찍고 `10800`을 넣으면 그림 폭이 14,200mm로 맞춰집니다(확인한 오차 0.003%). 다시 만들기: `node test/make-floorplan.js`
   - PDF 평면도는 바로 넣지 못합니다. PDF를 화면에 띄우고 캡처(Windows: Win+Shift+S)해 그림 파일로 넣어 주세요.
   - 분양 도면·업체 도면 그림은 따라 그리는 참고로만 쓰고, 도면을 남에게 보낼 때 원본 그림을 그대로 싣지 않습니다(저작권은 그 도면을 그린 쪽에 있습니다).
 - **복사·붙여넣기** Ctrl+C / Ctrl+V: 고른 객체를 복사해 클릭한 자리에 붙입니다. 다른 도면을 열어도 붙일 수 있고, 필요한 블록과 도면층도 함께 옮겨집니다.
@@ -198,8 +199,8 @@
 |---|---|
 | `index.html`, `css/`, `js/` | 프로그램 (`geom` 기하, `model` 도면 모델, `hatch` 해치, `region` 선으로 둘러싼 영역, `images` 밑그림 그림 보관, `dxf-read`·`dxf-write` DXF, `svg` 내보내기, `library` 양식·기호, `render` 화면, `commands` 명령, `app` 화면 연결, `aci` 표준 색) |
 | `build.js` | `node build.js` → `dist/daedong-cad.html` (한 파일) |
-| `test/` | `unit.js`, `e2e.js`, `make_fixtures.py`(ezdxf로 시험 DXF 만들기), `make-sample.js`(예시 도면·화면), `symbol-sheet.js`(기호 목록 그림), `fixtures/` |
-| `docs/` | 화면, 기호 목록, 예시 도면 |
+| `test/` | `unit.js`, `e2e.js`, `make_fixtures.py`(ezdxf로 시험 DXF 만들기), `make-sample.js`(예시 도면·화면), `symbol-sheet.js`(기호 목록 그림), `make-floorplan.js`(밑그림 시험용 평면도 그림), `desktop.js`(데스크톱 앱 시험), `fixtures/` |
+| `docs/` | 화면, 기호 목록, 예시 도면, 밑그림 시험용 평면도 그림 |
 | `desktop/` | Windows 데스크톱 앱 (Electron): `main.js`(창·파일·PDF·닫기), `preload.js`(화면에 여는 PC 파일 기능), `prepare.js`(화면 복사), `build-win.js`(설치 파일), `make-icon.js`·`build/`(아이콘), `package.json`(설치 설정) |
 
 - 시험 돌리기
