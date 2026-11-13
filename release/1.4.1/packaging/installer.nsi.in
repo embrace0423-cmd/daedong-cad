@@ -1,0 +1,424 @@
+Unicode true
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+!include "x64.nsh"
+!include "TextFunc.nsh"
+!include "WordFunc.nsh"
+!insertmacro GetParameters
+!insertmacro GetOptions
+!insertmacro GetParent
+!insertmacro TrimNewLines
+!insertmacro VersionCompare
+Name "대동 CAD @VERSION@"
+OutFile "@OUTPUT@"
+InstallDir "$LOCALAPPDATA\Programs\DaedongCAD-Release"
+RequestExecutionLevel user
+CRCCheck force
+SetCompressor zlib
+SetDatablockOptimize on
+SetDateSave off
+BrandingText "대동 CAD · 개인 사용자 설치"
+VIProductVersion "@VERSION@.0"
+VIAddVersionKey /LANG=1033 "ProductName" "대동 CAD"
+VIAddVersionKey /LANG=1033 "FileDescription" "대동 CAD 설치 프로그램"
+VIAddVersionKey /LANG=1033 "CompanyName" "대동"
+VIAddVersionKey /LANG=1033 "FileVersion" "@VERSION@"
+VIAddVersionKey /LANG=1033 "ProductVersion" "@VERSION@"
+VIAddVersionKey /LANG=1033 "OriginalFilename" "DaedongCAD-Setup-@VERSION@.exe"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "대동 CAD"
+!define APPKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.daedongcad.desktop.release"
+!define MARKER "DaedongCAD-Release-Owned-v1-6aa09747"
+Var TestMode
+Var OldMode
+Var OldVersion
+Var OldPresent
+Var CheckPath
+Var FailureText
+Var OldAppMoved
+Var OldUninstallerMoved
+Var OldMarkerMoved
+Var NewAppMoved
+Var NewUninstallerMoved
+Var NewMarkerMoved
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "Korean"
+
+!macro Fail MESSAGE CODE
+  StrCpy $FailureText "${MESSAGE}"
+  DetailPrint "$FailureText"
+  IfSilent +2
+  MessageBox MB_ICONSTOP|MB_OK "$FailureText"
+  SetErrorLevel ${CODE}
+  Abort
+!macroend
+
+!macro CommonValidation PREFIX
+Function ${PREFIX}ValidatePath
+  GetFullPathName $INSTDIR "$INSTDIR"
+  StrLen $0 $INSTDIR
+  ${If} $0 < 4
+    !insertmacro Fail "드라이브 루트에 설치하거나 제거할 수 없습니다." 10
+  ${EndIf}
+  StrCpy $0 $INSTDIR 2 1
+  ${If} $0 != ":\"
+    !insertmacro Fail "로컬 드라이브의 절대 경로를 선택하세요." 11
+  ${EndIf}
+  StrCpy $CheckPath $INSTDIR
+  Call ${PREFIX}CheckReparse
+FunctionEnd
+
+; Check the file/directory itself and every ancestor, before reading markers,
+; writing a payload or deleting any owned file. Unknown user paths are never traversed.
+Function ${PREFIX}CheckReparse
+  Push $CheckPath
+  pathloop_${PREFIX}:
+    System::Call 'kernel32::GetFileAttributesW(w "$CheckPath")i.r0 ?e'
+    Pop $R9
+    ${If} $0 != -1
+      IntOp $0 $0 & 0x400
+      ${If} $0 != 0
+        !insertmacro Fail "연결된 폴더(정션/심볼릭 링크)에는 설치하거나 제거하지 않습니다." 12
+      ${EndIf}
+    ${Else}
+      ${If} $R9 != 2
+      ${AndIf} $R9 != 3
+        !insertmacro Fail "대상 경로의 속성을 확인할 수 없습니다. 기존 파일을 보존하고 중단합니다." 13
+      ${EndIf}
+    ${EndIf}
+    ${GetParent} "$CheckPath" $1
+    StrCmp $1 "" pathdone_${PREFIX}
+    StrCmp $1 $CheckPath pathdone_${PREFIX}
+    StrCpy $CheckPath $1
+    Goto pathloop_${PREFIX}
+  pathdone_${PREFIX}:
+  Pop $CheckPath
+FunctionEnd
+
+Function ${PREFIX}ReadMarker
+  StrCpy $CheckPath "$INSTDIR\.daedongcad-install"
+  Call ${PREFIX}CheckReparse
+  ClearErrors
+  FileOpen $0 "$INSTDIR\.daedongcad-install" r
+  IfErrors markerbad_${PREFIX}
+  FileReadUTF16LE $0 $1
+  IfErrors markerclosebad_${PREFIX}
+  ${TrimNewLines} "$1" $1
+  StrCmp $1 "${MARKER}" 0 markerclosebad_${PREFIX}
+  FileReadUTF16LE $0 $1
+  IfErrors markerclosebad_${PREFIX}
+  ${TrimNewLines} "$1" $1
+  StrCmp $1 $INSTDIR 0 markerclosebad_${PREFIX}
+  FileReadUTF16LE $0 $OldMode
+  IfErrors markerclosebad_${PREFIX}
+  ${TrimNewLines} "$OldMode" $OldMode
+  FileReadUTF16LE $0 $OldVersion
+  IfErrors markerclosebad_${PREFIX}
+  ${TrimNewLines} "$OldVersion" $OldVersion
+  FileClose $0
+  ${If} $OldMode != "0"
+  ${AndIf} $OldMode != "1"
+    Goto markerbad_${PREFIX}
+  ${EndIf}
+  Call ${PREFIX}ValidateVersion
+  Return
+  markerclosebad_${PREFIX}:
+    FileClose $0
+  markerbad_${PREFIX}:
+    !insertmacro Fail "이 설치본의 소유 경로를 확인할 수 없습니다. 기존 파일을 보존하고 중단합니다." 14
+FunctionEnd
+
+Function ${PREFIX}ValidateVersion
+  StrCpy $2 0
+  StrCpy $3 0
+  StrCpy $4 0
+  StrCpy $5 ""
+  version_loop_${PREFIX}:
+    StrCpy $1 $OldVersion 1 $2
+    StrCmp $1 "" version_end_${PREFIX}
+    StrCmp $1 "." version_dot_${PREFIX}
+    StrCmp $1 "0" version_digit_${PREFIX}
+    StrCmp $1 "1" version_digit_${PREFIX}
+    StrCmp $1 "2" version_digit_${PREFIX}
+    StrCmp $1 "3" version_digit_${PREFIX}
+    StrCmp $1 "4" version_digit_${PREFIX}
+    StrCmp $1 "5" version_digit_${PREFIX}
+    StrCmp $1 "6" version_digit_${PREFIX}
+    StrCmp $1 "7" version_digit_${PREFIX}
+    StrCmp $1 "8" version_digit_${PREFIX}
+    StrCmp $1 "9" version_digit_${PREFIX}
+    Goto version_bad_${PREFIX}
+  version_digit_${PREFIX}:
+    IntOp $4 $4 + 1
+    ${If} $4 > 5
+      Goto version_bad_${PREFIX}
+    ${EndIf}
+    StrCpy $5 "$5$1"
+    ${If} $5 > 65535
+      Goto version_bad_${PREFIX}
+    ${EndIf}
+    Goto version_next_${PREFIX}
+  version_dot_${PREFIX}:
+    StrCmp $4 0 version_bad_${PREFIX}
+    IntOp $3 $3 + 1
+    ${If} $3 > 2
+      Goto version_bad_${PREFIX}
+    ${EndIf}
+    StrCpy $4 0
+    StrCpy $5 ""
+  version_next_${PREFIX}:
+    IntOp $2 $2 + 1
+    Goto version_loop_${PREFIX}
+  version_end_${PREFIX}:
+    StrCmp $3 2 0 version_bad_${PREFIX}
+    StrCmp $4 0 version_bad_${PREFIX}
+    Return
+  version_bad_${PREFIX}:
+    !insertmacro Fail "설치 표식의 버전이 손상되었습니다. 기존 파일을 보존하고 중단합니다." 15
+FunctionEnd
+
+Function ${PREFIX}CheckRunning
+  StrCpy $CheckPath "$INSTDIR\app\DaedongCAD.exe"
+  Call ${PREFIX}CheckReparse
+  IfFileExists "$INSTDIR\app\DaedongCAD.exe" 0 checkdone_${PREFIX}
+  System::Call 'kernel32::CreateFileW(w "$INSTDIR\app\DaedongCAD.exe",i 0xC0000000,i 0,p 0,i 3,i 0x80,p 0)p.r0'
+  ${If} $0 == -1
+    !insertmacro Fail "대동 CAD가 실행 중이거나 파일에 접근할 수 없습니다. 해당 설치본을 직접 종료한 뒤 다시 시도하세요." 16
+  ${EndIf}
+  System::Call 'kernel32::CloseHandle(p r0)'
+  checkdone_${PREFIX}:
+FunctionEnd
+
+Function ${PREFIX}CheckMutableFile
+  Call ${PREFIX}CheckReparse
+  IfFileExists "$CheckPath" 0 mutable_done_${PREFIX}
+  System::Call 'kernel32::CreateFileW(w "$CheckPath",i 0xC0010000,i 0,p 0,i 3,i 0x80,p 0)p.r0'
+  ${If} $0 == -1
+    !insertmacro Fail "제품 파일이 사용 중이거나 변경 권한이 없습니다. 기존 파일을 보존하고 중단합니다." 17
+  ${EndIf}
+  System::Call 'kernel32::CloseHandle(p r0)'
+  mutable_done_${PREFIX}:
+FunctionEnd
+!macroend
+!insertmacro CommonValidation ""
+!insertmacro CommonValidation "un."
+
+Function .onInit
+  ${IfNot} ${RunningX64}
+    !insertmacro Fail "이 설치본은 Windows x64용입니다." 18
+  ${EndIf}
+  SetRegView 64
+  SetShellVarContext current
+  StrCpy $TestMode "0"
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/TESTMODE" $1
+  ${IfNot} ${Errors}
+    StrCpy $TestMode "1"
+  ${EndIf}
+FunctionEnd
+
+Function .onVerifyInstDir
+  Call ValidatePath
+FunctionEnd
+
+Section "대동 CAD 설치"
+  Call ValidatePath
+  StrCpy $OldPresent "0"
+  IfFileExists "$INSTDIR\.daedongcad-install" owned existing_check
+  owned:
+    Call ReadMarker
+    StrCpy $OldPresent "1"
+    ${If} $OldMode != $TestMode
+      !insertmacro Fail "일반 설치와 격리 시험 설치를 같은 경로에서 바꾸지 않습니다." 19
+    ${EndIf}
+    ${VersionCompare} "$OldVersion" "@VERSION@" $0
+    ${If} $0 == 1
+      !insertmacro Fail "더 새로운 버전이 설치되어 있습니다. 이전 버전으로 덮어쓰지 않습니다." 20
+    ${EndIf}
+    IfFileExists "$INSTDIR\Uninstall DaedongCAD.exe" owned_uninstaller_present
+    !insertmacro Fail "기존 제거기를 확인할 수 없습니다. 설치본을 보존하고 중단합니다." 21
+    owned_uninstaller_present:
+    Goto registration_check
+  existing_check:
+    IfFileExists "$INSTDIR\*.*" 0 registration_check
+    FindFirst $0 $1 "$INSTDIR\*.*"
+    empty_loop:
+      StrCmp $1 "" empty_done
+      StrCmp $1 "." next_empty
+      StrCmp $1 ".." next_empty
+      FindClose $0
+      !insertmacro Fail "선택한 폴더가 비어 있지 않고 이 제품의 설치 표식도 없습니다. 다른 빈 폴더를 선택하세요." 22
+      next_empty:
+        FindNext $0 $1
+        Goto empty_loop
+    empty_done:
+      FindClose $0
+  registration_check:
+  ${If} $TestMode == "0"
+    ReadRegStr $0 HKCU "${APPKEY}" "InstallLocation"
+    ${If} $0 != ""
+    ${AndIf} $0 != $INSTDIR
+      !insertmacro Fail "이 정식 제품은 다른 경로에 등록되어 있습니다. 그 설치본을 보존하고 중단합니다." 23
+    ${EndIf}
+  ${EndIf}
+  StrCpy $CheckPath "$INSTDIR\app"
+  Call CheckReparse
+  StrCpy $CheckPath "$INSTDIR\Uninstall DaedongCAD.exe"
+  Call CheckReparse
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\app.new")i.r0'
+  StrCmp $0 -1 +2
+  Goto pending
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\app.previous")i.r0'
+  StrCmp $0 -1 +2
+  Goto pending
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\.uninstall.new.exe")i.r0'
+  StrCmp $0 -1 +2
+  Goto pending
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\.uninstall.previous.exe")i.r0'
+  StrCmp $0 -1 +2
+  Goto pending
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\.marker.new")i.r0'
+  StrCmp $0 -1 +2
+  Goto pending
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\.marker.previous")i.r0'
+  StrCmp $0 -1 +2
+  Goto pending
+  !include "@CHECK_EXISTING_INCLUDE@"
+  Goto ready
+  pending:
+    !insertmacro Fail "이전 설치의 준비/보존 폴더가 남아 있습니다. 파일을 확인하여 별도 보관한 뒤 다시 시도하세요." 24
+  ready:
+  Call CheckRunning
+  ClearErrors
+  SetOutPath "$INSTDIR\app.new"
+  IfErrors extract_failed
+  !include "@PAYLOAD_INCLUDE@"
+  WriteUninstaller "$INSTDIR\.uninstall.new.exe"
+  IfErrors extract_failed
+  ClearErrors
+  FileOpen $0 "$INSTDIR\.marker.new" w
+  IfErrors extract_failed
+  FileWriteUTF16LE $0 "${MARKER}$\r$\n$INSTDIR$\r$\n$TestMode$\r$\n@VERSION@$\r$\n"
+  FileClose $0
+  IfErrors extract_failed
+  SetOutPath "$INSTDIR"
+  StrCpy $OldAppMoved "0"
+  StrCpy $OldUninstallerMoved "0"
+  StrCpy $OldMarkerMoved "0"
+  StrCpy $NewAppMoved "0"
+  StrCpy $NewUninstallerMoved "0"
+  StrCpy $NewMarkerMoved "0"
+  ${If} $OldPresent == "1"
+    ClearErrors
+    Rename "$INSTDIR\app" "$INSTDIR\app.previous"
+    IfErrors rollback
+    StrCpy $OldAppMoved "1"
+    Rename "$INSTDIR\Uninstall DaedongCAD.exe" "$INSTDIR\.uninstall.previous.exe"
+    IfErrors rollback
+    StrCpy $OldUninstallerMoved "1"
+    Rename "$INSTDIR\.daedongcad-install" "$INSTDIR\.marker.previous"
+    IfErrors rollback
+    StrCpy $OldMarkerMoved "1"
+  ${EndIf}
+  ClearErrors
+  Rename "$INSTDIR\app.new" "$INSTDIR\app"
+  IfErrors rollback
+  StrCpy $NewAppMoved "1"
+  Rename "$INSTDIR\.uninstall.new.exe" "$INSTDIR\Uninstall DaedongCAD.exe"
+  IfErrors rollback
+  StrCpy $NewUninstallerMoved "1"
+  Rename "$INSTDIR\.marker.new" "$INSTDIR\.daedongcad-install"
+  IfErrors rollback
+  StrCpy $NewMarkerMoved "1"
+  ${If} $TestMode == "0"
+    ClearErrors
+    WriteRegStr HKCU "${APPKEY}" "DisplayName" "대동 CAD (정식)"
+    WriteRegStr HKCU "${APPKEY}" "DisplayVersion" "@VERSION@"
+    WriteRegStr HKCU "${APPKEY}" "Publisher" "대동"
+    WriteRegStr HKCU "${APPKEY}" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKCU "${APPKEY}" "UninstallString" '$\"$INSTDIR\Uninstall DaedongCAD.exe$\"'
+    WriteRegStr HKCU "${APPKEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall DaedongCAD.exe$\" /S'
+    WriteRegDWORD HKCU "${APPKEY}" "NoModify" 1
+    WriteRegDWORD HKCU "${APPKEY}" "NoRepair" 1
+    IfErrors registration_failed
+  ${EndIf}
+  !include "@CLEAN_PREVIOUS_INCLUDE@"
+  Delete "$INSTDIR\.uninstall.previous.exe"
+  Delete "$INSTDIR\.marker.previous"
+  SetErrorLevel 0
+  Goto finished
+  rollback:
+    ClearErrors
+    ${If} $NewMarkerMoved == "1"
+      Rename "$INSTDIR\.daedongcad-install" "$INSTDIR\.marker.new"
+      IfErrors rollback_failed
+    ${EndIf}
+    ${If} $NewUninstallerMoved == "1"
+      Rename "$INSTDIR\Uninstall DaedongCAD.exe" "$INSTDIR\.uninstall.new.exe"
+      IfErrors rollback_failed
+    ${EndIf}
+    ${If} $NewAppMoved == "1"
+      Rename "$INSTDIR\app" "$INSTDIR\app.new"
+      IfErrors rollback_failed
+    ${EndIf}
+    ${If} $OldMarkerMoved == "1"
+      Rename "$INSTDIR\.marker.previous" "$INSTDIR\.daedongcad-install"
+      IfErrors rollback_failed
+    ${EndIf}
+    ${If} $OldUninstallerMoved == "1"
+      Rename "$INSTDIR\.uninstall.previous.exe" "$INSTDIR\Uninstall DaedongCAD.exe"
+      IfErrors rollback_failed
+    ${EndIf}
+    ${If} $OldAppMoved == "1"
+      Rename "$INSTDIR\app.previous" "$INSTDIR\app"
+      IfErrors rollback_failed
+    ${EndIf}
+    !insertmacro Fail "설치 교체에 실패해 기존 앱/제거기/설치 정보를 복원했습니다. 준비 폴더는 보존했습니다." 25
+  rollback_failed:
+    !insertmacro Fail "설치 교체와 일부 복원에 실패했습니다. app.previous 및 .previous 파일을 보존했으니 복원 안내를 확인하세요." 26
+  extract_failed:
+    !insertmacro Fail "설치 파일 쓰기에 실패했습니다. 기존 앱은 바꾸지 않았으며 준비 폴더를 보존했습니다." 27
+  registration_failed:
+    !insertmacro Fail "앱은 설치됐지만 제거 정보 등록에 실패했습니다. 기존 앱 보존 폴더를 유지했습니다." 28
+  finished:
+SectionEnd
+
+Function un.onInit
+  SetRegView 64
+  SetShellVarContext current
+  Call un.ValidatePath
+  Call un.ReadMarker
+  StrCpy $TestMode $OldMode
+FunctionEnd
+
+Section "Uninstall"
+  Call un.ValidatePath
+  Call un.ReadMarker
+  Call un.CheckRunning
+  !include "@CHECK_UNINSTALL_INCLUDE@"
+  !include "@UNINSTALL_INCLUDE@"
+  ${If} $TestMode == "0"
+    ReadRegStr $0 HKCU "${APPKEY}" "InstallLocation"
+    ${If} $0 == $INSTDIR
+      DeleteRegKey HKCU "${APPKEY}"
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Delete "$INSTDIR\Uninstall DaedongCAD.exe"
+  IfFileExists "$INSTDIR\Uninstall DaedongCAD.exe" uninstall_failed
+  Delete "$INSTDIR\.daedongcad-install"
+  IfFileExists "$INSTDIR\.daedongcad-install" uninstall_failed
+  SetOutPath "$TEMP"
+  RMDir "$INSTDIR"
+  SetErrorLevel 0
+  Goto uninstall_done
+  uninstall_failed:
+    !insertmacro Fail "일부 제품 파일을 제거하지 못했습니다. 남은 파일과 설치 정보를 보존했습니다." 29
+  uninstall_done:
+SectionEnd

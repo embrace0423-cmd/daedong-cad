@@ -42,6 +42,28 @@
     return out || '_';
   }
 
+  // Independent symbol tables; case-insensitive uniqueness after R12 encoding.
+  // Never split a seven-character Unicode escape when adding a suffix.
+  function shortName(s, limit) {
+    var parts = s.match(/\\U\+[0-9A-F]{4}|./g) || [], out = '';
+    for (var i = 0; i < parts.length; i++) { if (out.length + parts[i].length > limit) break; out += parts[i]; }
+    return out || '_';
+  }
+  function nameAllocator(seeds, used) {
+    var cache = new Map(); used = used || Object.create(null);
+    (seeds || []).forEach(function (n) { cache.set(n, n); used[n.toUpperCase()] = true; });
+    return function (value) {
+      var original = String(value || '0');
+      if (cache.has(original)) return cache.get(original);
+      var base = nameOf(original), n = shortName(base, 31), number = 2;
+      while (used[n.toUpperCase()]) {
+        var suffix = '_' + (number++);
+        n = shortName(base, 31 - suffix.length) + suffix;
+      }
+      used[n.toUpperCase()] = true; cache.set(original, n); return n;
+    };
+  }
+
   function Writer() { this.lines = []; }
   Writer.prototype.w = function (code, val) {
     this.lines.push((code < 10 ? '  ' : code < 100 ? ' ' : '') + code);
@@ -55,16 +77,10 @@
 
   function writeDXF(doc) {
     var W = new Writer();
-    var names = { layer: {}, block: {}, used: {} };
-    function lname(n) { return names.layer[n] || (names.layer[n] = nameOf(n)); }
-    // 블록 이름: 겹치지 않게
-    function bname(n) {
-      if (names.block[n]) return names.block[n];
-      var base = nameOf(n), s = base, i = 2;
-      while (names.used[s]) s = base + '_' + (i++);
-      names.used[s] = true;
-      return (names.block[n] = s);
-    }
+    var names = { used: Object.create(null) };
+    var lname = nameAllocator(['0']);
+    var tname = nameAllocator(['CONTINUOUS', 'BYLAYER', 'BYBLOCK']);
+    var bname = nameAllocator([], names.used);
 
     var ext = Model.extents(doc);
     if (!G.boxValid(ext)) ext = { x0: 0, y0: 0, x1: 420, y1: 297 };
@@ -106,7 +122,7 @@
     lts.forEach(function (n) {
       var lt = doc.ltypes[n] || Model.LTYPES[n] || { pat: [] }, el = ltypeElems(lt.pat);
       var total = el.reduce(function (s, x) { return s + Math.abs(x); }, 0);
-      W.w(0, 'LTYPE'); W.w(2, nameOf(n)); W.int(70, 0);
+      W.w(0, 'LTYPE'); W.w(2, tname(n)); W.int(70, 0);
       W.w(3, el.length ? str(n + ' ' + el.map(function (x) { return x > 0 ? '__' : x === 0 ? '.' : ' '; }).join('')) : 'Solid line');
       W.int(72, 65); W.int(73, el.length); W.w(40, total);
       el.forEach(function (x) { W.w(49, x); });
@@ -119,7 +135,7 @@
       W.w(0, 'LAYER'); W.w(2, lname(l.name)); W.int(70, l.locked ? 4 : 0);
       var col = Math.max(1, Math.min(255, Math.abs(l.color) || 7));
       W.int(62, l.visible === false ? -col : col);
-      W.w(6, nameOf(l.ltype || 'CONTINUOUS'));
+      W.w(6, tname(l.ltype || 'CONTINUOUS'));
     });
     W.w(0, 'ENDTAB');
 
@@ -135,10 +151,10 @@
     W.w(0, 'ENDSEC');
 
     // ---- BLOCKS: 쓰인 블록만 (중첩 포함) ----
-    var need = [], seen = {};
+    var need = [], seen = Object.create(null);
     function collect(ents) {
       ents.forEach(function (e) {
-        if (e.type === 'insert' && doc.blocks[e.name] && !seen[e.name]) {
+        if (e.type === 'insert' && Object.prototype.hasOwnProperty.call(doc.blocks, e.name) && !seen[e.name]) {
           seen[e.name] = true; collect(doc.blocks[e.name].ents); need.push(e.name);
         }
       });
@@ -162,62 +178,62 @@
       W.w(0, 'BLOCK'); W.w(8, '0'); W.w(2, hn); W.int(70, 0); W.pt(10, G.v(0, 0)); W.w(3, hn); W.w(1, '');
       (Model.explode(h, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers }) || []).forEach(function (pe) {
         pe.layer = '0'; pe.color = 0; pe.ltype = 'CONTINUOUS';
-        writeEnt(W, pe, doc, lname, bname);
+        writeEnt(W, pe, doc, lname, bname, tname);
       });
       W.w(0, 'ENDBLK'); W.w(8, '0');
     });
     need.forEach(function (n) {
       var b = doc.blocks[n], bn = bname(n);
       W.w(0, 'BLOCK'); W.w(8, '0'); W.w(2, bn); W.int(70, 0); W.pt(10, b.base); W.w(3, bn); W.w(1, '');
-      b.ents.forEach(function (e) { writeEnt(W, e, doc, lname, bname); });
+      b.ents.forEach(function (e) { writeEnt(W, e, doc, lname, bname, tname); });
       W.w(0, 'ENDBLK'); W.w(8, '0');
     });
     W.w(0, 'ENDSEC');
 
     // ---- ENTITIES ----
     W.w(0, 'SECTION'); W.w(2, 'ENTITIES');
-    doc.ents.forEach(function (e) { writeEnt(W, e, doc, lname, bname); });
+    doc.ents.forEach(function (e) { writeEnt(W, e, doc, lname, bname, tname); });
     W.w(0, 'ENDSEC');
     W.w(0, 'EOF');
     hatchNames = null;
     return W.lines.join('\r\n') + '\r\n';
   }
 
-  function common(W, type, e, lname) {
+  function common(W, type, e, lname, tname) {
     W.w(0, type);
     W.w(8, lname(e.layer || '0'));
-    if (e.ltype && e.ltype !== 'BYLAYER') W.w(6, e.ltype === 'BYBLOCK' ? 'BYBLOCK' : nameOf(e.ltype));
+    if (e.ltype && e.ltype !== 'BYLAYER') W.w(6, e.ltype === 'BYBLOCK' ? 'BYBLOCK' : tname(e.ltype));
     if (e.color !== undefined && e.color !== 256) W.int(62, e.color);
   }
 
-  function writeEnt(W, e, doc, lname, bname) {
+  function writeEnt(W, e, doc, lname, bname, tname) {
     switch (e.type) {
       case 'line':
-        common(W, 'LINE', e, lname); W.pt(10, e.a); W.pt(11, e.b); break;
+        common(W, 'LINE', e, lname, tname); W.pt(10, e.a); W.pt(11, e.b); break;
       case 'circle':
-        common(W, 'CIRCLE', e, lname); W.pt(10, e.c); W.w(40, e.r); break;
+        common(W, 'CIRCLE', e, lname, tname); W.pt(10, e.c); W.w(40, e.r); break;
       case 'arc':
-        common(W, 'ARC', e, lname); W.pt(10, e.c); W.w(40, e.r);
+        common(W, 'ARC', e, lname, tname); W.pt(10, e.c); W.w(40, e.r);
         W.w(50, G.deg(G.normAng(e.a0))); W.w(51, G.deg(G.normAng(e.a1))); break;
       case 'point':
-        common(W, 'POINT', e, lname); W.pt(10, e.p); break;
+        common(W, 'POINT', e, lname, tname); W.pt(10, e.p); break;
       case 'poly':
         if (e.fill && e.pts.length >= 3 && e.pts.length <= 4 && !e.pts.some(function (p) { return p.bulge; })) {
           var q = e.pts;
-          common(W, 'SOLID', e, lname);
+          common(W, 'SOLID', e, lname, tname);
           W.pt(10, q[0]); W.pt(11, q[1]); W.pt(12, q.length === 4 ? q[3] : q[2]); W.pt(13, q[2]);
           break;
         }
-        writePoly(W, e, e.pts, !!e.closed, lname);
+        writePoly(W, e, e.pts, !!e.closed, lname, tname);
         break;
       case 'ellipse': {
         var ep = Model.ellipsePoints(e, 72);
         var pts = ep.full ? ep.pts.slice(0, -1) : ep.pts;
-        writePoly(W, e, pts, ep.full, lname);
+        writePoly(W, e, pts, ep.full, lname, tname);
         break;
       }
       case 'text': {
-        common(W, 'TEXT', e, lname);
+        common(W, 'TEXT', e, lname, tname);
         W.pt(10, e.p); W.w(40, e.h); W.w(1, str(e.s));
         if (e.rot) W.w(50, G.deg(G.normAng(e.rot)));
         W.w(7, 'STANDARD');
@@ -230,26 +246,26 @@
       }
       case 'mtext': case 'dim': {
         var parts = Model.explode(e, { nextId: 0, blocks: doc.blocks, settings: doc.settings, layers: doc.layers });
-        (parts || []).forEach(function (p) { writeEnt(W, p, doc, lname, bname); });
+        (parts || []).forEach(function (p) { writeEnt(W, p, doc, lname, bname, tname); });
         break;
       }
       case 'hatch': {
         var hn2 = hatchNames && hatchNames.get(e);
         if (!hn2) break;
-        common(W, 'INSERT', e, lname); W.w(2, hn2); W.pt(10, G.v(0, 0));
+        common(W, 'INSERT', e, lname, tname); W.w(2, hn2); W.pt(10, G.v(0, 0));
         W.w(41, 1); W.w(42, 1); W.w(43, 1); W.w(50, 0);
         break;
       }
       case 'insert':
-        if (!doc.blocks[e.name]) break;
-        common(W, 'INSERT', e, lname); W.w(2, bname(e.name)); W.pt(10, e.p);
+        if (!Object.prototype.hasOwnProperty.call(doc.blocks, e.name)) break;
+        common(W, 'INSERT', e, lname, tname); W.w(2, bname(e.name)); W.pt(10, e.p);
         W.w(41, e.sx === undefined ? 1 : e.sx); W.w(42, e.sy === undefined ? 1 : e.sy); W.w(43, 1);
         W.w(50, G.deg(G.normAng(e.rot || 0)));
         break;
     }
   }
-  function writePoly(W, e, pts, closed, lname) {
-    common(W, 'POLYLINE', e, lname);
+  function writePoly(W, e, pts, closed, lname, tname) {
+    common(W, 'POLYLINE', e, lname, tname);
     W.int(66, 1); W.pt(10, G.v(0, 0)); W.int(70, closed ? 1 : 0);
     pts.forEach(function (p) {
       W.w(0, 'VERTEX'); W.w(8, lname(e.layer || '0')); W.pt(10, p);

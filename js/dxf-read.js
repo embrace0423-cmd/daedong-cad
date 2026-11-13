@@ -80,7 +80,7 @@
     var doc = Model.newDoc();
     doc.layers = [];
     doc.ltypes = {};
-    var report = { skipped: {}, count: 0, ver: '', warnings: [] };
+    var report = { skipped: {}, count: 0, ver: '', warnings: [], importedLtypes: [], textSizeExplicit: false };
     var pos = 0;
 
     function skipTo(code, val) { while (pos < tk.length && !(tk[pos][0] === code && tk[pos][1].trim() === val)) pos++; }
@@ -112,7 +112,7 @@
           var v = tk[pos][1].trim(), val = tk[pos + 1] ? tk[pos + 1][1].trim() : '';
           if (v === '$ACADVER') report.ver = val;
           else if (v === '$LTSCALE') doc.settings.ltscale = parseFloat(val) || 1;
-          else if (v === '$TEXTSIZE') doc.settings.textH = parseFloat(val) || 2.5;
+          else if (v === '$TEXTSIZE') { doc.settings.textH = parseFloat(val) || 2.5; report.textSizeExplicit = true; }
           else if (v === '$INSUNITS') report.insunits = parseInt(val, 10);
           else if (v === '$CLAYER') doc.currentLayer = decodeStr(val);
         }
@@ -140,6 +140,7 @@
               var ln = decodeStr(s(tags, 2, '')).toUpperCase();
               if (ln && ln !== 'BYLAYER' && ln !== 'BYBLOCK') {
                 doc.ltypes[ln] = { desc: decodeStr(s(tags, 3, ln)), pat: all(tags, 49).map(parseFloat) };
+                if (report.importedLtypes.indexOf(ln) < 0) report.importedLtypes.push(ln);
               }
             }
             continue;
@@ -490,8 +491,7 @@
     if (!doc.ltypes.CONTINUOUS) doc.ltypes.CONTINUOUS = { desc: '실선', pat: [] };
     Object.keys(Model.LTYPES).forEach(function (k) { if (!doc.ltypes[k]) doc.ltypes[k] = JSON.parse(JSON.stringify(Model.LTYPES[k])); });
     if (!Model.layerOf(doc, doc.currentLayer)) doc.currentLayer = '0';
-    // 단위: 인치 도면이면 알림만
-    if (report.insunits === 1) report.warnings.push('이 도면은 인치 단위로 저장되어 있습니다. 숫자는 그대로 mm로 읽었습니다.');
+    // 단위 선택과 변환은 문서 교체 전에 별도로 수행한다.
     Model.touch();
     return { doc: doc, report: report };
   }

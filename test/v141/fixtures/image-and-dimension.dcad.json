@@ -1,0 +1,165 @@
+{
+  "format": "daedong-cad",
+  "version": 1,
+  "name": "합성 시험 전용",
+  "layers": [
+    {
+      "name": "0",
+      "color": 7,
+      "ltype": "CONTINUOUS",
+      "visible": true,
+      "locked": false
+    },
+    {
+      "name": "A B",
+      "color": 1,
+      "ltype": "CONTINUOUS",
+      "visible": true,
+      "locked": false
+    },
+    {
+      "name": "A_B",
+      "color": 2,
+      "ltype": "CONTINUOUS",
+      "visible": true,
+      "locked": false
+    },
+    {
+      "name": "a_b",
+      "color": 3,
+      "ltype": "CONTINUOUS",
+      "visible": true,
+      "locked": false
+    },
+    {
+      "name": "층/검토",
+      "color": 4,
+      "ltype": "CONTINUOUS",
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "currentLayer": "0",
+  "ltypes": {
+    "CONTINUOUS": {
+      "desc": "실선",
+      "pat": []
+    }
+  },
+  "blocks": {},
+  "ents": [
+    {
+      "id": 1,
+      "type": "line",
+      "layer": "A B",
+      "a": {
+        "x": 0,
+        "y": 0
+      },
+      "b": {
+        "x": 100,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "line",
+      "layer": "A_B",
+      "a": {
+        "x": 0,
+        "y": 50
+      },
+      "b": {
+        "x": 100,
+        "y": 50
+      }
+    },
+    {
+      "id": 3,
+      "type": "line",
+      "layer": "a_b",
+      "a": {
+        "x": 0,
+        "y": 100
+      },
+      "b": {
+        "x": 100,
+        "y": 100
+      }
+    },
+    {
+      "id": 4,
+      "type": "line",
+      "layer": "층/검토",
+      "a": {
+        "x": 0,
+        "y": 150
+      },
+      "b": {
+        "x": 100,
+        "y": 150
+      }
+    },
+    {
+      "id": 5,
+      "type": "image",
+      "layer": "0",
+      "p": {
+        "x": 0,
+        "y": 0
+      },
+      "u": {
+        "x": 10,
+        "y": 0
+      },
+      "v": {
+        "x": 0,
+        "y": 10
+      },
+      "ref": "synthetic-image",
+      "iw": 1,
+      "ih": 1,
+      "alpha": 0.5,
+      "plot": false,
+      "name": "synthetic.png"
+    },
+    {
+      "id": 6,
+      "type": "dim",
+      "layer": "0",
+      "kind": "lin",
+      "p1": {
+        "x": 0,
+        "y": 0
+      },
+      "p2": {
+        "x": 100,
+        "y": 0
+      },
+      "loc": {
+        "x": 0,
+        "y": 10
+      },
+      "ang": 0
+    }
+  ],
+  "settings": {
+    "scale": 1,
+    "sheet": "",
+    "ltscale": 1,
+    "textH": 2.5,
+    "grid": 10,
+    "dim": {
+      "textH": 2.5,
+      "arrow": 2.5,
+      "exo": 1,
+      "exe": 1.25,
+      "gap": 0.8,
+      "dec": 0
+    }
+  },
+  "nextId": 7,
+  "images": {
+    "synthetic-image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaPj/HwAEggJ/59habAAAAABJRU5ErkJggg=="
+  }
+}

@@ -1,0 +1,5 @@
+src/
+.sandbox/
+.contract-sandbox/
+out/
+verification/

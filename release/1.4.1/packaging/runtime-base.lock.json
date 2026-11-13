@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "description": "Runtime from this payload, excluding application ASAR and generated manifest",
+  "files": [
+    {
+      "path": "chrome_100_percent.pak",
+      "bytes": 719654,
+      "sha256": "ab7c4b7b6cb8832a31d44b95ec50ce52294f49422a3bdde4e21968eca2930cbe"
+    },
+    {
+      "path": "chrome_200_percent.pak",
+      "bytes": 1269017,
+      "sha256": "30fa4a6e27c9ff2fb0f939f01158477e621a67d86e9ecb84cf11b3947db8eb9d"
+    },
+    {
+      "path": "d3dcompiler_47.dll",
+      "bytes": 4741488,
+      "sha256": "a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb"
+    },
+    {
+      "path": "DaedongCAD.exe",
+      "bytes": 245798912,
+      "sha256": "42c74c1d64e8e77f1d31987656f3003c5a230baf733081caace11dbb3604e427"
+    },
+    {
+      "path": "dxcompiler.dll",
+      "bytes": 25744384,
+      "sha256": "100880188891e9e7038ac71e8e45bae997dc181316c315407b925dd87765cde5"
+    },
+    {
+      "path": "dxil.dll",
+      "bytes": 1509760,
+      "sha256": "77e039c905030a641e53658a008b74e90635a5ea9b6b79eabd0f2003bdfca59a"
+    },
+    {
+      "path": "ffmpeg.dll",
+      "bytes": 3113472,
+      "sha256": "56280f367caa6ea7b3a4d821face406baff49c44508f583711e894e9ca582000"
+    },
+    {
+      "path": "icudtl.dat",
+      "bytes": 10824576,
+      "sha256": "e1ed8f674bb8449731b79cae956042da59f9ecbd37c8d3f86586a22b4836e5b2"
+    },
+    {
+      "path": "LICENSE.electron.txt",
+      "bytes": 1096,
+      "sha256": "5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d"
+    },
+    {
+      "path": "LICENSES.chromium.html",
+      "bytes": 20477229,
+      "sha256": "e6e6b1f9cb0f32235412be113de7716333e88121f9159a0ea0ff3be652021af7"
+    },
+    {
+      "path": "locales/en-US.pak",
+      "bytes": 586582,
+      "sha256": "23b271e8009bfa14783700cd0712b4ecaa5b8f2ea28a4d81ae1d7e05bc0c96b1"
+    },
+    {
+      "path": "locales/ko.pak",
+      "bytes": 718706,
+      "sha256": "56449cc28bc41af4ccbf35b98dd30019839e8cc193f7ecf4ccd8dacc26302303"
+    },
+    {
+      "path": "resources.pak",
+      "bytes": 12436164,
+      "sha256": "88730058f77397d0dc87ebdbe35f10d2347aedac8bf09fda66c5e820ec010d50"
+    },
+    {
+      "path": "snapshot_blob.bin",
+      "bytes": 369024,
+      "sha256": "14df98e20ee798e9c92df316ff334dfed3edd540728b5b08049221c23061067d"
+    },
+    {
+      "path": "v8_context_snapshot.bin",
+      "bytes": 742456,
+      "sha256": "e22dd7edd9c73081469d3f939e37295f90b67c724960bbb68dcb2765c8ebb910"
+    },
+    {
+      "path": "vk_swiftshader.dll",
+      "bytes": 5520384,
+      "sha256": "7790c3f69d22cfe6942a6c275200005f28e8e01a3b707a039f0e35421c22974d"
+    },
+    {
+      "path": "vk_swiftshader_icd.json",
+      "bytes": 106,
+      "sha256": "32d83ff113fef532a9f97e0d2831f8656628ab1c99e9060f0332b1532839afd9"
+    },
+    {
+      "path": "vulkan-1.dll",
+      "bytes": 939520,
+      "sha256": "7244037e788dbcdf840eb91d3ae3df8aca48ad4e76aabcc59ab7926ee4d76c52"
+    }
+  ]
+}
