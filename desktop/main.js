@@ -4,6 +4,20 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const atomicStore = require('./atomic-store.cjs');
+const { MAX_WORK_BYTES } = require('./app/safety.js');
+
+// The release uses its own profile; the original 1.4.0 profile is never migrated
+// or overwritten implicitly. An explicit test path isolates release validation.
+const testProfile = process.env.DCAD_TEST_PROFILE;
+if (testProfile && !path.isAbsolute(testProfile)) throw new Error('격리 시험 프로필은 절대 경로여야 합니다.');
+const profilePath = testProfile || path.join(app.getPath('appData'), 'DaedongCAD-Release');
+fs.mkdirSync(profilePath, { recursive: true });
+app.setPath('userData', profilePath);
+app.setPath('sessionData', profilePath);
+app.commandLine.appendSwitch('user-data-dir', profilePath);
+if (process.platform === 'win32') app.setAppUserModelId('com.daedongcad.desktop.release');
 
 const PAGE = path.join(__dirname, 'app', 'daedong-cad.html');
 const OPENABLE = /\.(dxf|json|dcad)$/i;
@@ -20,10 +34,13 @@ const FILTERS = {
 let win = null;
 let dirty = false;
 let allowClose = false;
+let pendingRecoveryClose = null;
+let currentStamp = null;
 let lastDir = null;
 let firstFile = fileArg(process.argv);
-// 대화상자로 고르거나 연 파일만 묻지 않고 덮어쓴다
-const known = new Set();
+// Each open/save yields an opaque, path-bound snapshot token; a failed open never changes an existing token.
+const fileTokens = new Map();
+const MAX_FILE_TOKENS = 4096;
 
 // 실행 인자에서 열 파일 찾기 (DXF를 두 번 클릭하면 경로가 들어온다)
 function fileArg(argv) {
@@ -44,15 +61,47 @@ function pushRecent(p) {
   if (!OPENABLE.test(p)) return;
   const list = [p].concat(loadRecent().filter((q) => q.toLowerCase() !== p.toLowerCase())).slice(0, RECENT_MAX);
   try { fs.writeFileSync(recentPath(), JSON.stringify(list)); } catch (e) { /* 기록 실패는 무시 */ }
-  if (process.platform === 'win32') app.addRecentDocument(p);
+  if (process.platform === 'win32' && !testProfile) app.addRecentDocument(p);
 }
 
+function issueFileToken(p, fingerprint) {
+  const token = crypto.randomBytes(24).toString('hex');
+  if (fileTokens.size >= MAX_FILE_TOKENS) fileTokens.delete(fileTokens.keys().next().value);
+  fileTokens.set(token, { path: path.resolve(p), fingerprint });
+  return token;
+}
+function expectedForToken(p, token) {
+  const entry = typeof token === 'string' ? fileTokens.get(token) : null;
+  if (!entry || entry.path !== path.resolve(p)) {
+    const e = new Error('현재 작업 파일의 저장 기준을 확인할 수 없습니다. 다른 이름으로 저장하세요.');
+    e.code = 'EFILETOKEN'; throw e;
+  }
+  return entry.fingerprint;
+}
+function readBoundedWork(p) {
+  const fd = fs.openSync(p, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_WORK_BYTES) {
+      const e = new Error('작업 파일이 64 MiB 한도를 초과합니다. 기존 도면은 유지됩니다.'); e.code = 'EWORKTOOLARGE'; throw e;
+    }
+    const data = Buffer.allocUnsafe(size); let offset = 0;
+    while (offset < size) {
+      const count = fs.readSync(fd, data, offset, size - offset, offset);
+      if (!count) { const e = new Error('읽는 중 파일이 바뀌었습니다. 다시 시도하세요.'); e.code = 'EFILECHANGED'; throw e; }
+      offset += count;
+    }
+    if (fs.fstatSync(fd).size !== size) { const e = new Error('읽는 중 파일이 바뀌었습니다. 다시 시도하세요.'); e.code = 'EFILECHANGED'; throw e; }
+    return data;
+  } finally { fs.closeSync(fd); }
+}
 function readDoc(p) {
-  const data = fs.readFileSync(p);
-  known.add(p);
+  p = path.resolve(p);
+  const data = /\.(?:json|dcad)$/i.test(p) ? readBoundedWork(p) : fs.readFileSync(p);
+  const token = issueFileToken(p, { size: data.length, sha256: atomicStore.digest(data) });
   lastDir = path.dirname(p);
   pushRecent(p);
-  return { path: p, name: path.basename(p), data };
+  return { path: p, name: path.basename(p), data, token };
 }
 
 function defaultDir() {
@@ -69,12 +118,15 @@ async function askSavePath(name, kind, cur) {
   return r.filePath;
 }
 
-function writeOut(p, data) {
-  fs.writeFileSync(p, typeof data === 'string' ? data : Buffer.from(data));
-  known.add(p);
+function writeOut(p, data, token) {
+  p = path.resolve(p);
+  // No token is used only after the save dialog explicitly selected this destination.
+  const expected = token === undefined ? atomicStore.fingerprint(p) : expectedForToken(p, token);
+  const saved = atomicStore.writeAtomic(p, data, { expected });
+  const nextToken = issueFileToken(p, saved.fingerprint);
   lastDir = path.dirname(p);
   pushRecent(p);
-  return { path: p, name: path.basename(p) };
+  return { path: p, name: path.basename(p), backupPath: saved.backupPath, token: nextToken };
 }
 
 ipcMain.handle('dcad:info', () => ({ version: app.getVersion() }));
@@ -96,10 +148,47 @@ ipcMain.handle('dcad:open-dialog', async () => {
   if (r.canceled || !r.filePaths.length) return null;
   return readDoc(r.filePaths[0]);
 });
+ipcMain.handle('dcad:confirm-replace', async () => {
+  const r = await dialog.showMessageBox(win, {
+    type: 'question', title: '저장되지 않은 작업',
+    message: '현재 작업을 저장하고 계속할까요?',
+    detail: '복구된 작업은 정식 작업 파일로 저장하기 전까지 미저장 상태입니다.',
+    buttons: ['작업 저장', '저장하지 않고 계속', '취소'], defaultId: 0, cancelId: 2, noLink: true
+  });
+  return ['save', 'discard', 'cancel'][r.response] || 'cancel';
+});
+ipcMain.handle('dcad:choose-units', async (e, code) => {
+  const inch = code === 1;
+  const r = await dialog.showMessageBox(win, {
+    type: 'question', title: '도면 단위 확인',
+    message: inch ? '인치 도면을 mm로 변환할까요?' : '도면의 단위를 선택해 주세요.',
+    detail: inch ? '길이는 25.4배로 변환합니다.' : '단위를 알 수 없으면 취소하고 원본을 확인하세요.',
+    buttons: inch ? ['인치→mm 변환', '취소'] : ['mm로 읽기', '인치→mm 변환', '취소'],
+    defaultId: 0, cancelId: inch ? 1 : 2, noLink: true
+  });
+  return inch ? (r.response === 0 ? 'inch' : 'cancel') : (['mm', 'inch', 'cancel'][r.response] || 'cancel');
+});
+ipcMain.handle('dcad:choose-recovery', async (e, labels) => {
+  if (!Array.isArray(labels) || !labels.length || labels.length > 3 || labels.some(x => typeof x !== 'string' || x.length > 80)) return -1;
+  const r = await dialog.showMessageBox(win, {
+    type: 'question', title: '복구 보관본', message: '열 복구본을 선택하세요.',
+    buttons: labels.map((x, i) => (i + 1) + '. ' + x).concat('취소'),
+    defaultId: 0, cancelId: labels.length, noLink: true
+  });
+  return r.response < labels.length ? r.response : -1;
+});
 ipcMain.handle('dcad:save', async (e, req) => {
-  const cur = req.path && known.has(req.path) ? req.path : null;
+  const cur = req.path ? path.resolve(String(req.path)) : null;
+  if (req.kind === 'work' || (cur && /\.(?:json|dcad)$/i.test(cur))) {
+    const size = typeof req.data === 'string' ? Buffer.byteLength(req.data,'utf8') :
+      (ArrayBuffer.isView(req.data) || req.data instanceof ArrayBuffer ? req.data.byteLength : -1);
+    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_WORK_BYTES) {
+      const e = new Error('작업 파일이 64 MiB 한도를 초과하거나 올바르지 않아 저장하지 않았습니다.');e.code='EWORKTOOLARGE';throw e;
+    }
+  }
+  if (cur && typeof req.fileToken !== 'string') throw new Error('현재 작업 파일의 저장 기준이 없어 다른 이름으로 저장해야 합니다.');
   const p = cur || await askSavePath(String(req.name || '도면'), req.kind, req.path || null);
-  return p ? writeOut(p, req.data) : null;
+  return p ? writeOut(p, req.data, cur ? req.fileToken : undefined) : null;
 });
 ipcMain.handle('dcad:pdf', async (e, req) => {
   const p = await askSavePath(String(req.name || '도면.pdf'), 'pdf', null);
@@ -107,8 +196,26 @@ ipcMain.handle('dcad:pdf', async (e, req) => {
   const pdf = await win.webContents.printToPDF({ preferCSSPageSize: true, printBackground: false, margins: { marginType: 'none' } });
   return writeOut(p, pdf);
 });
-ipcMain.on('dcad:dirty', (e, d) => { dirty = !!d; });
+ipcMain.on('dcad:dirty', (e, d) => {
+  if (!win || e.sender !== win.webContents) return;
+  dirty = !!(d && typeof d === 'object' ? d.dirty : d);
+  if (d && typeof d === 'object') currentStamp = { sessionId: d.sessionId, revision: d.revision };
+});
 ipcMain.on('dcad:close-now', () => { allowClose = true; if (win) win.close(); });
+ipcMain.on('dcad:recovery-close-result', (e, result) => {
+  if (!win || e.sender !== win.webContents || !pendingRecoveryClose || !result || result.token !== pendingRecoveryClose) return;
+  pendingRecoveryClose = null;
+  if (!result.ok || !currentStamp || result.sessionId !== currentStamp.sessionId || result.revision !== currentStamp.revision) {
+    win.webContents.send('dcad:recovery-close-cancelled');
+    void dialog.showMessageBox(win, {
+      type: 'error', title: '작업 보관 실패', buttons: ['확인'],
+      message: '최신 작업의 복구 보관을 확인하지 못해 창을 닫지 않았습니다.',
+      detail: '작업 파일로 저장하거나 보관 공간을 확인한 뒤 다시 시도하세요.'
+    });
+    return;
+  }
+  allowClose = true; win.close();
+});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -117,7 +224,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     show: false,
-    title: '대동 CAD',
+    title: '대동 CAD ' + app.getVersion(),
     backgroundColor: '#15171c',
     icon: path.join(__dirname, 'app', 'icon.png'),
     webPreferences: {
@@ -146,9 +253,12 @@ function createWindow() {
       noLink: true,
       title: '대동 CAD',
       message: '바뀐 내용을 저장할까요?',
-      detail: '저장하지 않아도 지금 작업은 프로그램 안에 보관되어, 다음에 열면 이어서 나옵니다.'
+      detail: '저장하지 않고 닫기를 선택하면 최신 복구 보관을 확인한 후 닫습니다.'
     });
-    if (r === 1) { allowClose = true; win.close(); } else if (r === 0) win.webContents.send('dcad:save-and-close');
+    if (r === 1 && !pendingRecoveryClose) {
+      pendingRecoveryClose = crypto.randomBytes(16).toString('hex');
+      win.webContents.send('dcad:recovery-close', pendingRecoveryClose);
+    } else if (r === 0) win.webContents.send('dcad:save-and-close');
   });
   win.on('closed', () => { win = null; });
   win.loadFile(PAGE);

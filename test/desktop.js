@@ -29,11 +29,13 @@ async function launch(args) {
   });
   // 대화상자는 시험용으로 바꿔 끼운다: 저장·열기 경로와 닫기 답을 차례로 꺼내 쓴다
   await app.evaluate(({ dialog }) => {
-    global.__calls = { save: 0, open: 0, box: 0 };
-    global.__next = { save: [], open: [], box: [] };
+    global.__calls = { save: 0, open: 0, box: 0, ask: 0 };
+    global.__next = { save: [], open: [], box: [], ask: [] };
     dialog.showSaveDialog = async () => { __calls.save++; const p = __next.save.shift(); return p ? { canceled: false, filePath: p } : { canceled: true, filePath: '' }; };
     dialog.showOpenDialog = async () => { __calls.open++; const p = __next.open.shift(); return p ? { canceled: false, filePaths: [p] } : { canceled: true, filePaths: [] }; };
     dialog.showMessageBoxSync = () => { __calls.box++; const r = __next.box.shift(); return r === undefined ? 2 : r; };
+    // 1.4.1: 단위 확인·저장 안 한 작업 확인·복구본 고르기는 비동기 대화상자. 따로 정하지 않으면 첫 단추(0)
+    dialog.showMessageBox = async () => { __calls.ask++; const r = __next.ask.shift(); return { response: r === undefined ? 0 : r, checkboxChecked: false }; };
   });
   const page = await app.firstWindow();
   await page.waitForFunction(() => window.DCAD && DCAD.App && DCAD.App.doc);
@@ -61,7 +63,8 @@ async function waitFile(p, pred, ms) {
 (async () => {
   console.log('데스크톱 앱: ' + exe);
   const dxf = path.join(outDir, '받은 도면.dxf');
-  fs.copyFileSync(path.join(__dirname, 'fixtures', 'rich-r2018-utf8.dxf'), dxf);
+  // 1.4.1은 단위 코드 6(m) DXF를 열지 않으므로 같은 도면을 mm(4)로 바꾼 사본을 쓴다
+  fs.writeFileSync(dxf, fs.readFileSync(path.join(__dirname, 'fixtures', 'rich-r2018-utf8.dxf'), 'utf8').replace(/(\$INSUNITS\r?\n\s*70\r?\n)6(\r?\n)/, '$14$2'));
   const original = fs.readFileSync(dxf, 'latin1');
 
   // 1) 두 번 클릭한 DXF로 시작
@@ -70,44 +73,48 @@ async function waitFile(p, pred, ms) {
   let s = await state(page);
   check(await page.evaluate(() => typeof window.require === 'undefined' && typeof window.process === 'undefined' && !!window.dcadDesktop), '화면에는 Node가 없고 PC 파일 연결(dcadDesktop)만 있음');
   check(s.file && s.file.name === '받은 도면.dxf' && s.file.kind === 'dxf' && !s.file.ours && s.n > 0, '실행할 때 준 DXF를 엶 (한글·띄어쓰기 파일 이름, 개체 ' + s.n + '개)');
-  check(s.title === '받은 도면.dxf - 대동 CAD', '창 제목 = 파일 이름: ' + s.title);
+  check(s.title === '● 받은 도면.dxf - 대동 CAD 1.4.1', '창 제목 = 파일 이름 (받은 DXF는 작업 파일로 저장 전까지 ●, 1.4.1): ' + s.title);
   check(!(await page.evaluate(() => document.getElementById('dlg-new').open)), '파일로 시작하면 새 도면 창을 띄우지 않음');
   check(await page.isVisible('[data-act=pdf]'), 'PDF 버튼이 보임 (데스크톱에서만)');
+  page.on('dialog', (d) => d.accept().catch(() => {})); // DXF 내보내기 전 변환 내역 확인 창 (Electron이 먼저 처리하면 무시)
 
-  // 2) 받은 DXF의 첫 저장은 위치를 묻는다 (원본을 R12로 덮어쓰기 전에 한 번 확인)
-  await plan(app, 'save', dxf);
+  // 2) 1.4.1: Ctrl+S는 언제나 작업 파일(.dcad.json)에 저장한다. 받은 DXF 원본은 건드리지 않는다
+  const work = path.join(outDir, '받은 도면.dcad.json');
+  await plan(app, 'save', work);
   await page.keyboard.press('Control+s');
-  let buf = await waitFile(dxf, (b) => b.toString('latin1') !== original);
+  let wb = await waitFile(work);
   let c = await calls(app);
   s = await state(page);
-  check(c.save === 1 && buf && /AC1009/.test(buf.toString('latin1')), '받은 DXF 첫 Ctrl+S: 저장 위치를 물은 뒤 R12로 저장');
-  check(s.file.ours && !s.dirty, '저장 뒤 이 파일은 바로 덮어씀으로 바뀜');
+  check(c.save === 1 && wb && JSON.parse(wb.toString('utf8')).format === 'daedong-cad' && fs.readFileSync(dxf, 'latin1') === original, '받은 DXF 첫 Ctrl+S: 위치를 물은 뒤 작업 파일로 저장, 원본 DXF는 그대로');
+  check(s.file.kind === 'work' && !s.dirty && !s.title.startsWith('● '), '저장 뒤 작업 파일이 현재 파일, ● 표시 사라짐');
 
-  // 3) 그린 뒤 Ctrl+S는 묻지 않고 같은 파일에 저장
-  const before = count(buf.toString('latin1'), LINE);
+  // 3) 그린 뒤 Ctrl+S는 묻지 않고 같은 작업 파일에 저장
+  const nWork = JSON.parse(wb.toString('utf8')).ents.length;
   await drawLine(page, '0,0', '1000,0');
   s = await state(page);
   check(s.dirty && s.title.startsWith('● '), '고치면 제목에 ● 표시: ' + s.title);
   await page.keyboard.press('Control+s');
-  buf = await waitFile(dxf, (b) => count(b.toString('latin1'), LINE) === before + 1);
-  c = await calls(app);
-  check(buf && c.save === 1, 'Ctrl+S: 묻지 않고 같은 파일에 덮어씀 (선 ' + before + ' → ' + (buf ? count(buf.toString('latin1'), LINE) : '?') + ')');
-  s = await state(page);
-  check(!s.dirty && !s.title.startsWith('● '), '저장 뒤 ● 표시가 사라짐');
-
-  // 4) 작업 파일로 저장하면 그 뒤 Ctrl+S는 작업 파일에
-  const work = path.join(outDir, '받은 도면.dcad.json');
-  await plan(app, 'save', work);
-  await page.click('[data-act=savework]');
-  let wb = await waitFile(work);
-  s = await state(page);
-  check(wb && JSON.parse(wb.toString('utf8')).format === 'daedong-cad' && s.file.kind === 'work', '작업 파일 저장 (대화상자로 위치 고름)');
-  const nWork = JSON.parse(wb.toString('utf8')).ents.length;
-  await drawLine(page, '0,500', '1000,500');
-  await page.keyboard.press('Control+s');
   wb = await waitFile(work, (b) => JSON.parse(b.toString('utf8')).ents.length === nWork + 1);
   c = await calls(app);
-  check(wb && c.save === 2, '작업 파일을 연 상태의 Ctrl+S는 작업 파일에 바로 저장');
+  check(wb && c.save === 1, 'Ctrl+S: 묻지 않고 같은 작업 파일에 덮어씀 (개체 ' + nWork + ' → ' + (wb ? JSON.parse(wb.toString('utf8')).ents.length : '?') + ')');
+  s = await state(page);
+  check(!s.dirty && !s.title.startsWith('● '), '저장 뒤 ● 표시가 사라짐');
+  const backups = fs.readdirSync(outDir).filter((f) => /dcad-backup|\.bak/i.test(f));
+  console.log('    (같은 폴더의 백업 파일: ' + (backups.join(', ') || '없음') + ')');
+
+  // 4) DXF 내보내기: 확인 창 뒤 위치를 묻고 R12로 쓴다. 작업 파일 상태는 바꾸지 않는다
+  const exported = path.join(outDir, '내보낸 도면.dxf');
+  await plan(app, 'save', exported);
+  await page.click('[data-act=save]');
+  const xb = await waitFile(exported);
+  c = await calls(app);
+  s = await state(page);
+  check(xb && /AC1009/.test(xb.toString('latin1')) && c.save === 2 && s.file.kind === 'work' && s.file.name === '받은 도면.dcad.json', 'DXF 내보내기: 위치를 묻고 R12로 저장, 현재 파일은 작업 파일 그대로');
+  await drawLine(page, '0,500', '1000,500');
+  await page.keyboard.press('Control+s');
+  wb = await waitFile(work, (b) => JSON.parse(b.toString('utf8')).ents.length === nWork + 2);
+  c = await calls(app);
+  check(wb && c.save === 2, '내보낸 뒤에도 Ctrl+S는 작업 파일에 바로 저장');
 
   // 5) 다른 이름으로 (Ctrl+Shift+S)
   const work2 = path.join(outDir, '사본.dcad.json');
@@ -116,6 +123,7 @@ async function waitFile(p, pred, ms) {
   check(!!(await waitFile(work2)) && (await state(page)).file.name === '사본.dcad.json', 'Ctrl+Shift+S: 다른 이름으로 저장, 제목도 바뀜');
 
   // 6) 내보내기: 언제나 위치를 묻는다
+  let buf;
   const png = path.join(outDir, '그림.png'), svg = path.join(outDir, '그림.svg'), csv = path.join(outDir, '물량.csv');
   await plan(app, 'save', png);
   await page.click('[data-act=png]');
@@ -162,21 +170,22 @@ async function waitFile(p, pred, ms) {
   await page.keyboard.press('Control+o');
   await page.waitForFunction(() => DCAD.App.file && DCAD.App.file.name === '받은 도면.dcad.json');
   s = await state(page);
-  check(s.n === nWork + 1 && s.file.kind === 'work' && s.file.ours, 'Ctrl+O로 작업 파일 열기 (개체 ' + s.n + '개)');
+  check(s.n === nWork + 2 && s.file.kind === 'work' && s.file.ours, 'Ctrl+O로 작업 파일 열기 (개체 ' + s.n + '개)');
   check(await page.evaluate(() => DCAD.App.undo.length === 0), '다른 파일을 열면 되돌리기 기록을 비움 (엉뚱한 파일에 저장 막기)');
 
   // 9) 이미 열린 앱에 DXF를 또 두 번 클릭한 경우 (두 번째 실행 → 같은 창)
   await drawLine(page, '0,900', '1000,900');
-  let asked = null;
-  page.once('dialog', (d) => { asked = d.message(); d.dismiss(); });
+  // 1.4.1: 바꾸기 전 확인은 앱 대화상자(작업 저장 / 저장하지 않고 계속 / 취소)
+  let askedBefore = (await calls(app)).ask;
+  await plan(app, 'ask', 2);
   await app.evaluate(({ BrowserWindow }, p) => BrowserWindow.getAllWindows()[0].webContents.send('dcad:open-path', p), dxf);
   await page.waitForTimeout(500);
   s = await state(page);
-  check(asked && /저장하지 않았습니다/.test(asked) && s.file.name === '받은 도면.dcad.json' && s.dirty, '저장 안 한 도면이 있으면 바꾸기 전에 묻고, 취소하면 그대로');
-  page.once('dialog', (d) => d.accept());
+  check((await calls(app)).ask === askedBefore + 1 && s.file.name === '받은 도면.dcad.json' && s.dirty, '저장 안 한 도면이 있으면 바꾸기 전에 묻고, 취소하면 그대로');
+  await plan(app, 'ask', 1);
   await app.evaluate(({ BrowserWindow }, p) => BrowserWindow.getAllWindows()[0].webContents.send('dcad:open-path', p), dxf);
   await page.waitForFunction(() => DCAD.App.file && DCAD.App.file.name === '받은 도면.dxf');
-  check(true, '확인하면 새로 두 번 클릭한 DXF를 같은 창에서 엶');
+  check(true, '"저장하지 않고 계속"이면 새로 두 번 클릭한 DXF를 같은 창에서 엶');
 
   // 10) 인터넷으로 나가는 요청은 막힘
   const net = await page.evaluate(() => fetch('https://example.com/').then(() => 'ok', () => 'blocked'));
@@ -222,14 +231,16 @@ async function waitFile(p, pred, ms) {
   c = await calls(app);
   const wins = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   check(c.box === 1 && wins === 1, '닫기 → "바뀐 내용을 저장할까요?" → 취소하면 창이 그대로');
-  const lines0 = count(fs.readFileSync(dxf, 'latin1'), LINE);
+  const dxfBefore = fs.readFileSync(dxf, 'latin1');
+  const closeWork = path.join(outDir, '닫으며 저장.dcad.json');
   await plan(app, 'box', 0);
-  // 이 DXF는 다시 열린 받은 파일이라 첫 저장은 위치를 묻는다
-  await plan(app, 'save', dxf);
+  // 1.4.1: 받은 DXF를 연 상태에서 '저장'은 작업 파일로 저장하므로 위치를 묻는다
+  await plan(app, 'save', closeWork);
   const closed = app.waitForEvent('close');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
   await closed;
-  check(count(fs.readFileSync(dxf, 'latin1'), LINE) === lines0 + 1, '저장 → DXF에 저장한 뒤 앱이 닫힘');
+  const cw = fs.existsSync(closeWork) && JSON.parse(fs.readFileSync(closeWork, 'utf8'));
+  check(cw && cw.format === 'daedong-cad' && fs.readFileSync(dxf, 'latin1') === dxfBefore, '저장 → 작업 파일로 저장한 뒤 앱이 닫힘 (받은 DXF는 그대로)');
 
   // 12) 다시 켜면 지난 작업이 이어서 나옴, 저장 안 함으로 닫기
   ({ app, page } = await launch([]));

@@ -56,6 +56,36 @@
     }
     return obj;
   }
+  // Decode into a private staging area before a work document can replace the current one.
+  function prepare(obj) {
+    var images = obj && obj.images || {}, refs = Object.keys(images);
+    if (refs.length && typeof g.Image !== 'function') return Promise.reject(new Error('이미지 준비 기능을 사용할 수 없습니다.'));
+    return refs.reduce(function (chain, ref) {
+      return chain.then(function (prepared) {
+        if (map.has(ref) && map.get(ref).src !== images[ref]) throw new Error('기존 그림과 다른 이미지 참조가 충돌합니다.');
+        return new Promise(function (resolve, reject) {
+          var im = new g.Image(), timer = setTimeout(function () { finish(false); }, 15000), done = false;
+          function finish(ok) {
+            if (done) return;
+            done = true; clearTimeout(timer); im.onload = null; im.onerror = null;
+            if (!ok) { reject(new Error('작업 파일의 그림을 읽지 못했습니다.')); return; }
+            prepared.push({ ref: ref, src: images[ref], el: im }); resolve(prepared);
+          }
+          im.onload = function () { finish(true); };
+          im.onerror = function () { finish(false); };
+          try { im.src = images[ref]; } catch (_) { finish(false); }
+        });
+      });
+    }, Promise.resolve([]));
+  }
+  function commitPrepared(obj, prepared) {
+    prepared.forEach(function (item) {
+      if (map.has(item.ref) && map.get(item.ref).src !== item.src) throw new Error('기존 그림과 다른 이미지 참조가 충돌합니다.');
+    });
+    prepared.forEach(function (item) { map.set(item.ref, { src: item.src, el: item.el }); });
+    if (obj && obj.images) delete obj.images;
+    return obj;
+  }
   // 작업 파일·자동 저장용 JSON (쓰인 그림을 함께 담음)
   function serialize(doc) {
     var imgs = pack(doc);
@@ -67,7 +97,9 @@
 
   NS.Images = {
     put: put, el: el, src: src, has: function (r) { return map.has(r); },
-    pack: pack, unpack: unpack, serialize: serialize,
+    pack: pack, unpack: unpack, prepare: prepare, commitPrepared: commitPrepared, serialize: serialize,
+    capture: function () { return new Map(map); },
+    restore: function (snapshot) { map = new Map(snapshot); },
     onLoad: function (fn) { onload = fn; }
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

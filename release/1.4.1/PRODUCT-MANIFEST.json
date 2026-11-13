@@ -1,0 +1,357 @@
+{
+  "product": "DaedongCAD",
+  "version": "1.4.1",
+  "architecture": "Windows x64",
+  "installerSha256": "2c441f64bc547e4c925140e85ef2218a8ca041a69e4ae3805467feab72855f9f",
+  "files": [
+    {
+      "path": "DaedongCAD-Setup-1.4.1.exe",
+      "bytes": 145229852,
+      "sha256": "2c441f64bc547e4c925140e85ef2218a8ca041a69e4ae3805467feab72855f9f"
+    },
+    {
+      "path": "build-evidence/build-evidence.json",
+      "bytes": 7555,
+      "sha256": "a00ba93f61308297f375332a4ce36b05e0a33361a7a46c77f3aeefd5530b8f9f"
+    },
+    {
+      "path": "build-evidence/check-existing.nsh",
+      "bytes": 1647,
+      "sha256": "3602e84bb378060f8fc1777666f850d8bdfc047ed8a419f4e9e6807b7bb52c73"
+    },
+    {
+      "path": "build-evidence/check-uninstall.nsh",
+      "bytes": 1713,
+      "sha256": "ab6c0a9e45653b676ee2506a0dfe6ee44aff2f1688f4e3184f89edcd9b101aeb"
+    },
+    {
+      "path": "build-evidence/clean-previous.nsh",
+      "bytes": 2963,
+      "sha256": "aa53a69c395deb2e33d51f20c0ae2753ae1e602acf6957c8743d381941c2f6ef"
+    },
+    {
+      "path": "build-evidence/exe-version.json",
+      "bytes": 135,
+      "sha256": "d9dd76824eab836e89407ab779f1ed839d9b15733801c82c7f934e2b31719ee1"
+    },
+    {
+      "path": "build-evidence/installer.nsi",
+      "bytes": 15613,
+      "sha256": "da66e1a847402f348601c165711a91acba3cc616ead186dcd65600893e3538ba"
+    },
+    {
+      "path": "build-evidence/nsis-build.log",
+      "bytes": 1383,
+      "sha256": "69dc2efcc99333b6c1b7099804c1927dbdffdad4f410d5e2bb448dd135880175"
+    },
+    {
+      "path": "build-evidence/payload.nsh",
+      "bytes": 6238,
+      "sha256": "79d1f7b1d74ed3e7e7441219c39a71520c3f708c1427452f46c12d61f36bff1b"
+    },
+    {
+      "path": "build-evidence/reproducible-builds-v2.json",
+      "bytes": 1863,
+      "sha256": "b9ae7865fd286e09a6ab95aaab0070db5415cfcd886374586c1856e3a5640908"
+    },
+    {
+      "path": "build-evidence/runtime-base.lock.json",
+      "bytes": 3002,
+      "sha256": "6129e6ed1e771ee230687cd9256fd821ab922dca3c32cdf9b5e486fb2f9d747d"
+    },
+    {
+      "path": "build-evidence/uninstall.nsh",
+      "bytes": 3912,
+      "sha256": "32afcdaffbd030d4148ef6312afddcaec266c01ccfd250fc06728e70bd36abb0"
+    },
+    {
+      "path": "docs/CAPTURE-DISPOSITION.md",
+      "bytes": 1869,
+      "sha256": "6fe5d7ce9c5dc089d0ed8d0ffb2a5a91435bb0bb35f21a0e03b013ac0b0f2a19"
+    },
+    {
+      "path": "docs/RELEASE-NOTES.ko.md",
+      "bytes": 7479,
+      "sha256": "72e7cea318c197bcb2972236ea1497e55e0395526ceb59efd733e2ef21022d32"
+    },
+    {
+      "path": "docs/USER-GUIDE.ko.md",
+      "bytes": 9616,
+      "sha256": "8ebba109bc4fa80f059daa3865cfd76e01199904bb643026aca4f7c342712cc7"
+    },
+    {
+      "path": "fixtures/baseline.dcad.json",
+      "bytes": 1974,
+      "sha256": "27e39a75a6536171a456a89d93df2eb44080c2c35d5ac2935cb859fd3487b344"
+    },
+    {
+      "path": "fixtures/block-linetype-collision.dcad.json",
+      "bytes": 3203,
+      "sha256": "0be3b9c83f7eca40a07fcfdf09f2304aa7261db2cc0765ddd56112a8de2dadbd"
+    },
+    {
+      "path": "fixtures/image-and-dimension.dcad.json",
+      "bytes": 2818,
+      "sha256": "1ad461bf5e81e39788635f4bb058de254adba9d6890d7502000ad5fb33aed879"
+    },
+    {
+      "path": "fixtures/invalid-cyclic-blocks.dcad.json",
+      "bytes": 2943,
+      "sha256": "659fa1fd253525f956d3e40fdb4023d09f39b9b71578c3b27137263d9f1c79d4"
+    },
+    {
+      "path": "fixtures/invalid-duplicate-id.dcad.json",
+      "bytes": 1974,
+      "sha256": "a324921932f781ca9d2a2fa2e6ee6546457358db619cb0cb2029be9e2544492d"
+    },
+    {
+      "path": "fixtures/invalid-missing-layer.dcad.json",
+      "bytes": 1994,
+      "sha256": "3db65b7ad014daaf19dfaf48680ef24e948ecec56d9f86fdf54e49c3a71c416b"
+    },
+    {
+      "path": "fixtures/invalid-nonfinite.dcad.json",
+      "bytes": 1976,
+      "sha256": "03e25632ba2c4a3fbc94d6e00729dce2df36680d6c18b062f440cfac36f20be4"
+    },
+    {
+      "path": "fixtures/square-one-inch.dxf",
+      "bytes": 265,
+      "sha256": "8acde7699d12daec2ebe9ebdcf03a169fc1f834c28a984c2cedcd424865ee8a2"
+    },
+    {
+      "path": "fixtures/square-unit-unknown.dxf",
+      "bytes": 265,
+      "sha256": "fea55b1b49ac49e25d10372934c24a64edb01f115e812eb08d240e975abfae71"
+    },
+    {
+      "path": "packaging/BUILD.md",
+      "bytes": 9702,
+      "sha256": "1e69275e951dfaba1bd5b394df232fb757fd46f807f54221bf3f3c6797962d84"
+    },
+    {
+      "path": "packaging/INSTALLER_EXIT_CODES.md",
+      "bytes": 2736,
+      "sha256": "56c5831c3d19f81bf89cbd7dacfe7ae7311b516ae8c2528702b84f49112f9ed3"
+    },
+    {
+      "path": "packaging/build-tools-offline.zip",
+      "bytes": 3385317,
+      "sha256": "3c752bdeb8477299e656aa46dd331d4aa92090c382a8c8c8b82effaf8466da6f"
+    },
+    {
+      "path": "packaging/installer.nsi.in",
+      "bytes": 14928,
+      "sha256": "a5375a98fcfd7d7e2b37e7f7b680bf2d7cb25d67371085f185d4d6c00940169e"
+    },
+    {
+      "path": "packaging/runtime-base.lock.json",
+      "bytes": 3002,
+      "sha256": "6129e6ed1e771ee230687cd9256fd821ab922dca3c32cdf9b5e486fb2f9d747d"
+    },
+    {
+      "path": "packaging/toolchain-lock.json",
+      "bytes": 124612,
+      "sha256": "188de89fee6d63b04313816b145dbe25c60dee1c6f16ea0fce401cba0a444183"
+    },
+    {
+      "path": "scripts/build-release.py",
+      "bytes": 10300,
+      "sha256": "1ece43a6f61f2cf005a57cc9b22a8da2a32020d86451a8144645c0121bc490c9"
+    },
+    {
+      "path": "scripts/build-toolchain-bundle.py",
+      "bytes": 4164,
+      "sha256": "98460e0a921e5967fd2191e01e4e578c375a911c5cf8ccc1fb5263ae1b6a2df7"
+    },
+    {
+      "path": "scripts/build-version-resource.py",
+      "bytes": 5187,
+      "sha256": "8125e46ce33820dbb7aedc4a3e2f2171e7d63135f063feb28bbbffcebe7cd4b2"
+    },
+    {
+      "path": "src/app/daedong-cad.html",
+      "bytes": 328987,
+      "sha256": "2d159653ff068ced9f8a3173362352b18c8a0f0063a943938ee3f56f9de50a39"
+    },
+    {
+      "path": "src/app/icon.png",
+      "bytes": 47232,
+      "sha256": "885ff274fbc1a15a44328b6642f69e10721a57f7cf343258c966d17298817890"
+    },
+    {
+      "path": "src/app/safety.js",
+      "bytes": 9527,
+      "sha256": "23f5cf3fc1d7d4a68f6256d560f1bb81e76633b93d05e7bfccd87e41add20e3e"
+    },
+    {
+      "path": "src/atomic-store.cjs",
+      "bytes": 4573,
+      "sha256": "7d8c65010c21ee03f5026718aa6a8dbef58c4463d094eaac23091f48c6ae931b"
+    },
+    {
+      "path": "src/main.js",
+      "bytes": 13380,
+      "sha256": "b44c9d2a46b29a8b0462c9378e805f8c54ccd58444aa61d3c009b58d222bb932"
+    },
+    {
+      "path": "src/package.json",
+      "bytes": 234,
+      "sha256": "0f39b02fcf57b9de7d53cf441214ccffd3d7076e13c585bed46eab267ad03882"
+    },
+    {
+      "path": "src/preload.js",
+      "bytes": 1582,
+      "sha256": "b81efc489d4e28dbd159672067d08c370895ec91537c7ca07ec15fcaaf8ab134"
+    },
+    {
+      "path": "tests/atomic-store.test.cjs",
+      "bytes": 5775,
+      "sha256": "c6cd44f20e64603e9deb5846ee834b27957cb4ce7e3bf9857cfdda1d7a490870"
+    },
+    {
+      "path": "tests/audit-installer-evidence.py",
+      "bytes": 4964,
+      "sha256": "75787c5ef7666eea9f7f6b06e357fc0028fc227b8e56554c4e1ee0517f13761c"
+    },
+    {
+      "path": "tests/close-flow.test.cjs",
+      "bytes": 2759,
+      "sha256": "a99b1a9f2fde9ceaae278c4e970020c99fe72c60f62f7a4c510fdbec1234de23"
+    },
+    {
+      "path": "tests/dxf-names.test.cjs",
+      "bytes": 2974,
+      "sha256": "a622a43f0578714ca956319c54189c1540b64455b2760de3c92f49a288c62904"
+    },
+    {
+      "path": "tests/dxf-v3-integration.test.cjs",
+      "bytes": 1393,
+      "sha256": "33e184ee43eaca6c858b0ae06eff9f275d43928335ab193b254589987560a9ea"
+    },
+    {
+      "path": "tests/extra-validation.cjs",
+      "bytes": 13012,
+      "sha256": "3345d4889d62c93e1533b2647da1f40dfea81f879443007108f49721f5a22cf5"
+    },
+    {
+      "path": "tests/file-token.test.cjs",
+      "bytes": 5974,
+      "sha256": "137cf1568eecfae240287c95f19333157fa624b2e81049cc18392d8bcf0721d0"
+    },
+    {
+      "path": "tests/fixtures/invalid-format-only.dcad.json",
+      "bytes": 33,
+      "sha256": "9af5ba745d41d5313141aeb8ed23a1c6825f12330dfe72cbdcf24e0676aa9264"
+    },
+    {
+      "path": "tests/image-readiness.test.cjs",
+      "bytes": 4195,
+      "sha256": "d094da9dfedc068b15ebf74b193c6d82b217553720e0efa03b8fc33b5ef0ea3b"
+    },
+    {
+      "path": "tests/installer-normal-mode.py",
+      "bytes": 3757,
+      "sha256": "b689239d2f692a30f36eb861281b9e5aebadd0545d07f37a7ba2456d18dd0480"
+    },
+    {
+      "path": "tests/installer-validation.py",
+      "bytes": 19055,
+      "sha256": "5d7188ebc42ec1819344e7cb751ae2e8bf98b9ffc974b5c906706ec0574fa629"
+    },
+    {
+      "path": "tests/kill-checkpoint-child.cjs",
+      "bytes": 1613,
+      "sha256": "740a30b6a51a3b026ba0dd260ac7693aa7ece9afa4a9a075ba3b8e29427ff0f7"
+    },
+    {
+      "path": "tests/open-race.test.cjs",
+      "bytes": 2878,
+      "sha256": "837e0dbfe492dd5a391ce336bb53d5ab8b324587c030013f246a61f716ac38cc"
+    },
+    {
+      "path": "tests/recovery.test.cjs",
+      "bytes": 9081,
+      "sha256": "9c2383a879e432f19a711ab52fbd9c12b02814e52be8a583cdfd96135afb491a"
+    },
+    {
+      "path": "tests/reference-contract-scoped.mjs",
+      "bytes": 22778,
+      "sha256": "7c8f8f88a7847c0426d431402c5cd8c32f3edb00def4ca18bad660bd83cbb884"
+    },
+    {
+      "path": "tests/reference-contract-v2.mjs",
+      "bytes": 22418,
+      "sha256": "7d6d4a1954aa05e2fee977803e35639f42f5b5d25949bdb3aec3ef9046ee9ee1"
+    },
+    {
+      "path": "tests/reference-contract-v3.mjs",
+      "bytes": 26609,
+      "sha256": "53f33ed5f0f0d3ff9df6491e98e827d1b387e889e13e3adcc16a3fb0d7f0e045"
+    },
+    {
+      "path": "tests/run-kill-checkpoints.py",
+      "bytes": 5268,
+      "sha256": "da6628b088d9e269362f5e90a8c0ac1b91a2bb0221472763d18d731c2b7520f2"
+    },
+    {
+      "path": "tests/save-export.test.cjs",
+      "bytes": 5277,
+      "sha256": "b22fa3318706129b72372d102f54ffafb339040bbd1f204b3eecce7fdf2b65f2"
+    },
+    {
+      "path": "tests/save-file-token.test.cjs",
+      "bytes": 1194,
+      "sha256": "394a8f797a57366445d4065642feda0df2fef9fadbc519688db4ba5c6cc99b9a"
+    },
+    {
+      "path": "tests/save-queue.test.cjs",
+      "bytes": 2884,
+      "sha256": "c9a2cfce59274333407741875023b32f369ce166c4d0e08d58cffa2bdc801e4b"
+    },
+    {
+      "path": "tests/size-boundary-extra.test.cjs",
+      "bytes": 2167,
+      "sha256": "7c72b83bd8580c4492663dc1953167aa80f6bf351db2a76e3f8f7d2db432487b"
+    },
+    {
+      "path": "tests/units.test.cjs",
+      "bytes": 4274,
+      "sha256": "8c53014f158be5be926eb4c913edec31b0c0edc24a1f21ddfb02b3607432bab5"
+    },
+    {
+      "path": "tests/validate-syntax.cjs",
+      "bytes": 823,
+      "sha256": "5b1f0f9c730a55cd29c4c9c605f383eae817c6dc7296af7fd9617b0a7c8bdb66"
+    },
+    {
+      "path": "tests/verify-gui-dxf.py",
+      "bytes": 1780,
+      "sha256": "dec47b4cd158d6ad2ad6d80c19522adf3c9c21d9924424373b693b2311d987f8"
+    },
+    {
+      "path": "tests/verify-gui-names.cjs",
+      "bytes": 1373,
+      "sha256": "55dcd1a179f38f029ff50c5fcc9cb69d2e160cf0f38fe2b5150589ba5445eb4a"
+    },
+    {
+      "path": "tests/work-open.test.cjs",
+      "bytes": 5409,
+      "sha256": "4ae787bc85e9ff3315b481d0bf888e0c8ff48863358edc9348a3f2e9f51437db"
+    },
+    {
+      "path": "tests/work-size.test.cjs",
+      "bytes": 2078,
+      "sha256": "bb3fa644381d206e70684d998e72b8ea96536ce346586e1bdafe741618a19ccc"
+    }
+  ],
+  "scope": "product archive with source, build tools, synthetic tests and documentation; review/GUI evidence is supplied separately",
+  "notIncluded": [
+    "user drawings and profiles",
+    "QCAD binaries",
+    "failed draft installers",
+    "live runtime caches"
+  ],
+  "doesNotAutoExecute": true,
+  "reviewVerdict": "not asserted by this archive"
+}

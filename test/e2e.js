@@ -13,6 +13,9 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
 (async () => {
   const browser = await playwright.chromium.launch({ env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } }); // 한글 파일 이름
   const page = await browser.newPage({ viewport: { width: 1500, height: 920 }, acceptDownloads: true });
+  // 1.4.1: DXF 내보내기 전 변환 내역 확인 창 등은 '확인'으로 진행
+  const dialogs = [];
+  page.on('dialog', (d) => { dialogs.push(d.type() + ': ' + d.message()); d.accept(); });
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
@@ -297,7 +300,7 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   check(fs.statSync(dxfPath).size > 1000, 'DXF 저장 (' + fs.statSync(dxfPath).size + ' bytes)');
   check(dl.suggestedFilename() === '리모델링 평면도.dxf', '저장 파일 이름 = 도면 이름 (' + dl.suggestedFilename() + ')');
   await page.waitForTimeout(100);
-  check(/밑그림 1개는 DXF에 넣지 않았습니다/.test(await history()) && !/IMAGE/.test(fs.readFileSync(dxfPath, 'latin1')), 'DXF에는 밑그림을 넣지 않고 알려 줌');
+  check(dialogs.some((m) => /밑그림 제외: 1개/.test(m)) && !/IMAGE/.test(fs.readFileSync(dxfPath, 'latin1')), 'DXF에는 밑그림을 넣지 않고 내보내기 전 확인 창에서 알려 줌 (1.4.1)');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=svg]')]);
   await dl2.saveAs(path.join(OUT, 'e2e-remodel.svg'));
   const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=png]')]);
@@ -341,7 +344,16 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   }
 
   // 16) 받은 DXF 열기 (ezdxf가 만든 R2018)
-  const fx = path.resolve(__dirname, 'fixtures', 'rich-r2018-utf8.dxf');
+  // 1.4.1: 단위 코드가 mm(4)·인치(1)·없음(0)이 아니면 열지 않는다. ezdxf 기본값은 6(m)이라 먼저 거부를 확인하고,
+  // 같은 도면을 mm(4)로 바꾼 사본으로 읽기를 확인한다.
+  const fx6 = path.resolve(__dirname, 'fixtures', 'rich-r2018-utf8.dxf');
+  const before6 = await page.evaluate(() => DCAD.App.doc.ents.length);
+  await page.setInputFiles('#file', fx6);
+  await page.waitForTimeout(300);
+  h = await history();
+  check(/단위 코드 6는 자동 변환을 지원하지 않습니다/.test(h) && (await page.evaluate(() => DCAD.App.doc.ents.length)) === before6, '단위 코드 6(m) DXF는 열지 않고 지금 도면을 지킴 (1.4.1)');
+  const fx = path.join(OUT, 'rich-r2018-utf8.dxf');
+  fs.writeFileSync(fx, fs.readFileSync(fx6, 'utf8').replace(/(\$INSUNITS\r?\n\s*70\r?\n)6(\r?\n)/, '$14$2'));
   await page.setInputFiles('#file', fx);
   await page.waitForTimeout(300);
   h = await history();
