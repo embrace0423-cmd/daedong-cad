@@ -158,6 +158,16 @@ ipcMain.handle('dcad:confirm-replace', async () => {
   return ['save', 'discard', 'cancel'][r.response] || 'cancel';
 });
 ipcMain.handle('dcad:choose-units', async (e, code) => {
+  if (code === 6) {
+    const r = await dialog.showMessageBox(win, {
+      type: 'question', title: '도면 단위 확인',
+      message: 'DXF에 미터(m)로 표시되어 있습니다. 실제 도면의 단위를 선택해 주세요.',
+      detail: '좌표가 이미 mm이면 그대로 읽으세요. 실제 미터 도면이면 길이를 1,000배로 바꿔 mm로 읽습니다.',
+      buttons: ['mm로 읽기 (좌표 유지)', 'm → mm 변환 (×1,000)', '취소'],
+      defaultId: 2, cancelId: 2, noLink: true
+    });
+    return ['mm', 'm', 'cancel'][r.response] || 'cancel';
+  }
   const inch = code === 1;
   const r = await dialog.showMessageBox(win, {
     type: 'question', title: '도면 단위 확인',

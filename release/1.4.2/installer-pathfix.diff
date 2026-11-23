@@ -1,0 +1,22 @@
+--- original-1.4.2/installer.nsi.in
++++ pathfix1/installer.nsi.in
+@@ -60,7 +60,18 @@
+ 
+ !macro CommonValidation PREFIX
+ Function ${PREFIX}ValidatePath
+-  GetFullPathName $INSTDIR "$INSTDIR"
++  ; NSIS GetFullPathName returns an empty string for missing directories.
++  ; Canonicalize without creating anything; keep all ownership/reparse guards.
++  StrCpy $0 $INSTDIR 2 1
++  ${If} $0 != ":\"
++    !insertmacro Fail "로컬 드라이브의 절대 경로를 선택하세요." 11
++  ${EndIf}
++  System::Call 'kernel32::GetFullPathNameW(w "$INSTDIR", i ${NSIS_MAX_STRLEN}, w .r1, p 0)i.r0'
++  ${If} $0 == 0
++  ${OrIf} $0 >= ${NSIS_MAX_STRLEN}
++    !insertmacro Fail "설치 경로를 변환할 수 없거나 너무 깁니다. 다른 경로를 선택하세요." 30
++  ${EndIf}
++  StrCpy $INSTDIR $1
+   StrLen $0 $INSTDIR
+   ${If} $0 < 4
+     !insertmacro Fail "드라이브 루트에 설치하거나 제거할 수 없습니다." 10

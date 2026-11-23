@@ -97,9 +97,9 @@
     return doc;
   }
   function convertDxfUnits(doc, unit, report, Model, G) {
-    if (unit !== 'mm' && unit !== 'inch') fail('도면 단위를 선택해야 합니다.');
-    if (unit === 'inch') {
-      const factor=25.4, matrix=G.M.scale(factor,factor);
+    if (unit !== 'mm' && unit !== 'inch' && unit !== 'm') fail('도면 단위를 선택해야 합니다.');
+    if (unit !== 'mm') {
+      const factor=unit==='m'?1000:25.4, matrix=G.M.scale(factor,factor);
       function scaleEntity(e) {
         if (e.type === 'insert') { e.p.x *= factor; e.p.y *= factor; }
         else Model.transform(e,matrix);
