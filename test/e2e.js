@@ -13,7 +13,7 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
 (async () => {
   const browser = await playwright.chromium.launch({ env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } }); // 한글 파일 이름
   const page = await browser.newPage({ viewport: { width: 1500, height: 920 }, acceptDownloads: true });
-  // 1.4.1: DXF 내보내기 전 변환 내역 확인 창 등은 '확인'으로 진행
+  // 1.4.1: DXF 내보내기 전 변환 내역 확인 창 등은 '확인'으로 진행 (1.4.2: 미터 DXF 단위 질문도 '확인' = mm로 읽기)
   const dialogs = [];
   page.on('dialog', (d) => { dialogs.push(d.type() + ': ' + d.message()); d.accept(); });
   const errors = [];
@@ -344,14 +344,21 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   }
 
   // 16) 받은 DXF 열기 (ezdxf가 만든 R2018)
-  // 1.4.1: 단위 코드가 mm(4)·인치(1)·없음(0)이 아니면 열지 않는다. ezdxf 기본값은 6(m)이라 먼저 거부를 확인하고,
-  // 같은 도면을 mm(4)로 바꾼 사본으로 읽기를 확인한다.
+  // 1.4.2: 단위 코드 6(m) DXF는 'mm로 읽기(좌표 유지)'와 'm → mm 변환(×1,000)' 중에서 고른다.
+  // 이 시험의 대화상자는 모두 '확인'이라 첫 질문(mm로 읽기)을 고른 것이 된다. 그 밖의 코드(예: 2 = 피트)는 여전히 열지 않는다.
   const fx6 = path.resolve(__dirname, 'fixtures', 'rich-r2018-utf8.dxf');
-  const before6 = await page.evaluate(() => DCAD.App.doc.ents.length);
+  const d6 = dialogs.length;
   await page.setInputFiles('#file', fx6);
   await page.waitForTimeout(300);
   h = await history();
-  check(/단위 코드 6는 자동 변환을 지원하지 않습니다/.test(h) && (await page.evaluate(() => DCAD.App.doc.ents.length)) === before6, '단위 코드 6(m) DXF는 열지 않고 지금 도면을 지킴 (1.4.1)');
+  check(dialogs.slice(d6).some((m) => /미터\(m\)로 표시되어/.test(m)) && /측정값을 변환하지 않고 mm로 읽었습니다/.test(h), '단위 코드 6(m) DXF는 단위를 묻고 mm로 읽기를 고르면 좌표 그대로 엶 (1.4.2)');
+  const fx2 = path.join(OUT, 'rich-r2018-feet.dxf');
+  fs.writeFileSync(fx2, fs.readFileSync(fx6, 'utf8').replace(/(\$INSUNITS\r?\n\s*70\r?\n)6(\r?\n)/, '$12$2'));
+  const before2 = await page.evaluate(() => DCAD.App.doc.ents.length);
+  await page.setInputFiles('#file', fx2);
+  await page.waitForTimeout(300);
+  h = await history();
+  check(/단위 코드 2는 자동 변환을 지원하지 않습니다/.test(h) && (await page.evaluate(() => DCAD.App.doc.ents.length)) === before2, '단위 코드 2(피트) DXF는 열지 않고 지금 도면을 지킴');
   const fx = path.join(OUT, 'rich-r2018-utf8.dxf');
   fs.writeFileSync(fx, fs.readFileSync(fx6, 'utf8').replace(/(\$INSUNITS\r?\n\s*70\r?\n)6(\r?\n)/, '$14$2'));
   await page.setInputFiles('#file', fx);

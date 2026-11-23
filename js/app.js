@@ -50,7 +50,7 @@
   function selectedEnts() { var out = []; App.sel.forEach(function (id) { var e = entById(id); if (e) out.push(e); }); return out; }
   function updateTitle() {
     $('#docname').textContent = (App.recovered ? '↶ 복구됨 · 작업 저장 필요 · ' : (App.dirty ? '● 수정됨 · ' : '')) + (App.doc.name || '새 도면') + '  ·  1:' + G.fmt(App.doc.settings.scale || 1, 3) + (App.doc.settings.sheet ? '  ·  ' + App.doc.settings.sheet : '');
-    document.title = (App.dirty ? '● ' : '') + (App.file ? App.file.name : (App.doc.name || '새 도면')) + ' - 대동 CAD 1.4.1';
+    document.title = (App.dirty ? '● ' : '') + (App.file ? App.file.name : (App.doc.name || '새 도면')) + ' - 대동 CAD 1.4.2';
     if (Desk) Desk.setDirty(App.dirty, { sessionId: App.sessionId, revision: App.revision });
   }
 
@@ -1176,6 +1176,8 @@
           var sk = Object.keys(r.report.skipped);
           msg('열었습니다: ' + (path || name) + ' (' + (r.report.ver || '버전 미상') + ', 개체 ' + r.doc.ents.length + '개, ' + Math.round(performance.now() - t0) + 'ms)', 'ok');
           if (unit === 'inch') msg('인치 도면의 길이를 25.4배로 변환했습니다. 작업 파일로 저장해 주세요.');
+          if (unit === 'm') msg('미터 도면의 길이를 1,000배로 변환했습니다.');
+          else if (unit === 'mm' && r.report.insunits === 6) msg('측정값을 변환하지 않고 mm로 읽었습니다.');
           if (sk.length) msg('읽지 못한 개체: ' + sk.map(function (k) { return k + ' ' + r.report.skipped[k] + '개'; }).join(', ') + ' (해치 등은 아직 지원하지 않습니다)', 'err');
           r.report.warnings.forEach(function (w) { msg(w, 'err'); });
           return true;
@@ -1186,9 +1188,13 @@
   function chooseDxfUnit(report) {
     var code = Number.isInteger(report.insunits) ? report.insunits : 0;
     if (code === 4) return Promise.resolve('mm');
-    if (code !== 0 && code !== 1) return Promise.reject(new Error('단위 코드 ' + code + '는 자동 변환을 지원하지 않습니다. mm 또는 인치 DXF로 다시 저장해 주세요.'));
+    if (code !== 0 && code !== 1 && code !== 6) return Promise.reject(new Error('단위 코드 ' + code + '는 자동 변환을 지원하지 않습니다. mm 또는 인치 DXF로 다시 저장해 주세요.'));
     if (Desk) return Desk.chooseUnits(code);
     if (code === 1) return Promise.resolve(g.confirm('인치 도면을 mm로 변환할까요?') ? 'inch' : 'cancel');
+    if (code === 6) {
+      if (g.confirm('DXF에 미터(m)로 표시되어 있습니다. 실제 좌표가 mm이면 확인을 눌러 그대로 읽으세요. 미터 변환 또는 열기 취소는 취소를 누르세요.')) return Promise.resolve('mm');
+      return Promise.resolve(g.confirm('실제 미터 도면이면 확인을 눌러 길이를 1,000배로 변환할까요? 취소하면 열지 않습니다.') ? 'm' : 'cancel');
+    }
     if (g.confirm('단위 미상 도면을 mm로 읽을까요?')) return Promise.resolve('mm');
     return Promise.resolve(g.confirm('인치로 판단하여 mm로 변환할까요?') ? 'inch' : 'cancel');
   }

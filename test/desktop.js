@@ -63,7 +63,7 @@ async function waitFile(p, pred, ms) {
 (async () => {
   console.log('데스크톱 앱: ' + exe);
   const dxf = path.join(outDir, '받은 도면.dxf');
-  // 1.4.1은 단위 코드 6(m) DXF를 열지 않으므로 같은 도면을 mm(4)로 바꾼 사본을 쓴다
+  // 단위를 묻지 않고 바로 열리도록 같은 도면을 mm(4)로 바꾼 사본을 쓴다 (6 = m은 1.4.2부터 단위 질문이 뜸)
   fs.writeFileSync(dxf, fs.readFileSync(path.join(__dirname, 'fixtures', 'rich-r2018-utf8.dxf'), 'utf8').replace(/(\$INSUNITS\r?\n\s*70\r?\n)6(\r?\n)/, '$14$2'));
   const original = fs.readFileSync(dxf, 'latin1');
 
@@ -73,7 +73,7 @@ async function waitFile(p, pred, ms) {
   let s = await state(page);
   check(await page.evaluate(() => typeof window.require === 'undefined' && typeof window.process === 'undefined' && !!window.dcadDesktop), '화면에는 Node가 없고 PC 파일 연결(dcadDesktop)만 있음');
   check(s.file && s.file.name === '받은 도면.dxf' && s.file.kind === 'dxf' && !s.file.ours && s.n > 0, '실행할 때 준 DXF를 엶 (한글·띄어쓰기 파일 이름, 개체 ' + s.n + '개)');
-  check(s.title === '● 받은 도면.dxf - 대동 CAD 1.4.1', '창 제목 = 파일 이름 (받은 DXF는 작업 파일로 저장 전까지 ●, 1.4.1): ' + s.title);
+  check(s.title === '● 받은 도면.dxf - 대동 CAD 1.4.2', '창 제목 = 파일 이름 (받은 DXF는 작업 파일로 저장 전까지 ●, 1.4.1): ' + s.title);
   check(!(await page.evaluate(() => document.getElementById('dlg-new').open)), '파일로 시작하면 새 도면 창을 띄우지 않음');
   check(await page.isVisible('[data-act=pdf]'), 'PDF 버튼이 보임 (데스크톱에서만)');
   page.on('dialog', (d) => d.accept().catch(() => {})); // DXF 내보내기 전 변환 내역 확인 창 (Electron이 먼저 처리하면 무시)
